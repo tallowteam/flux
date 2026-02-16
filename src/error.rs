@@ -42,6 +42,9 @@ pub enum FluxError {
 
     #[error("Compression error: {0}")]
     CompressionError(String),
+
+    #[error("Protocol error: {0}")]
+    ProtocolError(String),
 }
 
 impl FluxError {
@@ -71,6 +74,9 @@ impl FluxError {
             }
             FluxError::ResumeError(_) => {
                 Some("Delete the .flux-resume.json manifest file and restart the transfer.")
+            }
+            FluxError::ProtocolError(_) => {
+                Some("Check the URL format. Examples: sftp://user@host/path, \\\\server\\share, https://server/webdav/")
             }
             _ => None,
         }

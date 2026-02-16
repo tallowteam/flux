@@ -6,6 +6,7 @@ mod cli;
 mod config;
 mod error;
 mod progress;
+mod protocol;
 mod transfer;
 
 use cli::args::{Cli, Commands};
@@ -43,8 +44,8 @@ fn run(cli: Cli) -> Result<(), FluxError> {
     match cli.command {
         Commands::Cp(args) => {
             tracing::debug!(
-                source = %args.source.display(),
-                dest = %args.dest.display(),
+                source = %args.source,
+                dest = %args.dest,
                 recursive = args.recursive,
                 chunks = args.chunks,
                 verify = args.verify,

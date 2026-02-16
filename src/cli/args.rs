@@ -1,5 +1,4 @@
 use clap::{Parser, Subcommand};
-use std::path::PathBuf;
 
 #[derive(Parser, Debug)]
 #[command(name = "flux", version, about = "Blazing-fast file transfer")]
@@ -24,11 +23,11 @@ pub enum Commands {
 
 #[derive(clap::Args, Debug)]
 pub struct CpArgs {
-    /// Source path
-    pub source: PathBuf,
+    /// Source path or URI (e.g., file.txt, sftp://host/path, \\\\server\\share)
+    pub source: String,
 
-    /// Destination path
-    pub dest: PathBuf,
+    /// Destination path or URI (e.g., file.txt, sftp://host/path, \\\\server\\share)
+    pub dest: String,
 
     /// Copy directories recursively
     #[arg(short, long)]

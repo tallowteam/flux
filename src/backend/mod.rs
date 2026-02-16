@@ -2,6 +2,9 @@ pub mod local;
 
 use std::path::Path;
 
+use crate::error::FluxError;
+use crate::protocol::Protocol;
+
 /// Metadata about a file or directory.
 #[derive(Debug, Clone)]
 pub struct FileStat {
@@ -52,4 +55,23 @@ pub trait FluxBackend: Send + Sync {
 
     /// Check backend capabilities.
     fn features(&self) -> BackendFeatures;
+}
+
+/// Create the appropriate backend for a detected protocol.
+///
+/// Returns `LocalBackend` for local paths. Network backends (SFTP, SMB, WebDAV)
+/// return stub errors until Plans 02-04 implement them.
+pub fn create_backend(protocol: &Protocol) -> Result<Box<dyn FluxBackend>, FluxError> {
+    match protocol {
+        Protocol::Local { .. } => Ok(Box::new(local::LocalBackend::new())),
+        Protocol::Sftp { .. } => Err(FluxError::ProtocolError(
+            "SFTP backend not yet implemented".to_string(),
+        )),
+        Protocol::Smb { .. } => Err(FluxError::ProtocolError(
+            "SMB backend not yet implemented".to_string(),
+        )),
+        Protocol::WebDav { .. } => Err(FluxError::ProtocolError(
+            "WebDAV backend not yet implemented".to_string(),
+        )),
+    }
 }

@@ -12,9 +12,11 @@ use std::path::{Path, PathBuf};
 use indicatif::ProgressBar;
 use walkdir::WalkDir;
 
+use crate::backend::create_backend;
 use crate::cli::args::CpArgs;
 use crate::error::FluxError;
 use crate::progress::bar::{create_directory_progress, create_file_progress};
+use crate::protocol::detect_protocol;
 
 use self::checksum::hash_file;
 use self::chunk::{auto_chunk_count, chunk_file};
@@ -56,10 +58,38 @@ impl TransferResult {
 /// Execute a copy command based on parsed CLI arguments.
 ///
 /// Validates inputs, creates a TransferFilter from --exclude/--include args,
-/// then dispatches to single-file or directory copy.
+/// then dispatches to single-file or directory copy. Detects protocol from
+/// source and destination strings -- network protocols return stub errors
+/// until Phase 3 Plans 02-04 implement them.
 pub fn execute_copy(args: CpArgs, quiet: bool) -> Result<(), FluxError> {
-    let source = &args.source;
-    let dest = &args.dest;
+    // Detect protocols from source and destination strings
+    let src_protocol = detect_protocol(&args.source);
+    let dst_protocol = detect_protocol(&args.dest);
+
+    tracing::debug!("Source protocol: {} ({})", src_protocol.name(), args.source);
+    tracing::debug!("Dest protocol: {} ({})", dst_protocol.name(), args.dest);
+
+    // For non-local protocols, validate the backend is available (will error with stub message)
+    if !src_protocol.is_local() {
+        let _backend = create_backend(&src_protocol)?;
+    }
+    if !dst_protocol.is_local() {
+        let _backend = create_backend(&dst_protocol)?;
+    }
+
+    // Extract local paths -- for now, only local-to-local transfers are supported.
+    // Once network backends are implemented (Plans 02-04), this will route through
+    // the appropriate backend's open_read/open_write.
+    let source = src_protocol
+        .local_path()
+        .cloned()
+        .unwrap_or_else(|| PathBuf::from(&args.source));
+    let dest = dst_protocol
+        .local_path()
+        .cloned()
+        .unwrap_or_else(|| PathBuf::from(&args.dest));
+    let source = &source;
+    let dest = &dest;
 
     // Build the filter from CLI patterns
     let filter = TransferFilter::new(&args.exclude, &args.include)?;
