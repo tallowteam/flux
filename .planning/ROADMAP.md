@@ -49,11 +49,12 @@ Plans:
   3. User can verify transfer integrity with `--verify` flag (BLAKE3 checksum)
   4. User can enable compression with `--compress` for text-heavy transfers
   5. User can limit bandwidth with `--limit 10MB/s`
-**Plans**: TBD
+**Plans**: 3 plans
 
 Plans:
-- [ ] 02-01: TBD
-- [ ] 02-02: TBD
+- [ ] 02-01-PLAN.md — Dependencies, CLI flags, chunk types, positional I/O primitives
+- [ ] 02-02-PLAN.md — Parallel chunked copy with rayon, BLAKE3 integrity verification
+- [ ] 02-03-PLAN.md — Resume manifests, zstd compression, bandwidth throttling
 
 ### Phase 3: Network Protocols
 **Goal**: User can transfer files to/from SFTP, SMB, and WebDAV endpoints using same commands
@@ -143,7 +144,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Foundation | 0/3 | Planned | - |
-| 2. Performance | 0/TBD | Not started | - |
+| 2. Performance | 0/3 | Planned | - |
 | 3. Network Protocols | 0/TBD | Not started | - |
 | 4. User Experience | 0/TBD | Not started | - |
 | 5. Discovery & Security | 0/TBD | Not started | - |
