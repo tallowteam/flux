@@ -10,28 +10,28 @@ See: .planning/PROJECT.md (updated 2026-02-16)
 ## Current Position
 
 Phase: 2 of 7 (Performance)
-Plan: 1 of 3 in current phase
-Status: In Progress
-Last activity: 2026-02-16 -- Completed 02-01-PLAN.md
+Plan: 3 of 3 in current phase
+Status: Phase Complete
+Last activity: 2026-02-16 -- Completed 02-03-PLAN.md
 
-Progress: [####------] 19%
+Progress: [######----] 29%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 4
-- Average duration: 20min
-- Total execution time: 1.3 hours
+- Total plans completed: 6
+- Average duration: 17min
+- Total execution time: 1.7 hours
 
 **By Phase:**
 
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
 | 01-foundation | 3/3 | 73min | 24min |
-| 02-performance | 1/3 | 5min | 5min |
+| 02-performance | 3/3 | 22min | 7min |
 
 **Recent Trend:**
-- Last 5 plans: 01-01 (49min), 01-02 (17min), 01-03 (7min), 02-01 (5min)
+- Last 5 plans: 01-02 (17min), 01-03 (7min), 02-01 (5min), 02-02 (10min), 02-03 (7min)
 - Trend: Strongly accelerating (established codebase + patterns reduce each plan's time)
 
 *Updated after each plan completion*
@@ -59,6 +59,11 @@ Recent decisions affecting current work:
 - [02-01] auto_chunk_count capped at std::thread::available_parallelism to avoid over-subscribing CPU
 - [02-01] Positional I/O uses cfg(unix)/cfg(windows) with FileExt traits, no Mutex needed for parallel reads
 - [02-01] read_at_exact and write_at_all retry on Interrupted errors, matching std behavior
+- [02-03] Resume manifest stored as .flux-resume.json sidecar next to destination for human-readability
+- [02-03] Bandwidth limit forces sequential copy to avoid shared token bucket complexity
+- [02-03] Compression infrastructure ready for Phase 3; local copies pass through unchanged
+- [02-03] Manifest uses crash-safe writes (flush + sync_all) to survive interruptions
+- [02-03] Incompatible manifests auto-deleted and transfer restarts fresh
 
 ### Pending Todos
 
@@ -71,8 +76,8 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-02-16
-Stopped at: Completed 02-01-PLAN.md (chunk infrastructure, positional I/O, CLI flags, 64 tests)
-Resume file: .planning/phases/02-performance/02-01-SUMMARY.md
+Stopped at: Completed 02-03-PLAN.md (resume, compression, throttling -- Phase 2 complete, 124 tests)
+Resume file: .planning/phases/02-performance/02-03-SUMMARY.md
 
 ---
 *State initialized: 2026-02-16*
