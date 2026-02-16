@@ -1,0 +1,55 @@
+pub mod local;
+
+use std::path::Path;
+
+/// Metadata about a file or directory.
+#[derive(Debug, Clone)]
+pub struct FileStat {
+    pub size: u64,
+    pub is_dir: bool,
+    pub is_file: bool,
+    pub modified: Option<std::time::SystemTime>,
+    pub permissions: Option<u32>,
+}
+
+/// Entry in a directory listing.
+#[derive(Debug, Clone)]
+pub struct FileEntry {
+    pub path: std::path::PathBuf,
+    pub stat: FileStat,
+}
+
+/// What capabilities a backend supports.
+#[derive(Debug, Clone)]
+pub struct BackendFeatures {
+    pub supports_seek: bool,
+    pub supports_parallel: bool,
+    pub supports_permissions: bool,
+}
+
+/// Core abstraction for all file backends.
+///
+/// Phase 1 implements LocalBackend only.
+/// Future phases add SftpBackend, SmbBackend, WebDavBackend.
+///
+/// Synchronous trait -- local file I/O is inherently blocking.
+/// Will evolve to async with `#[async_trait]` when network backends arrive (Phase 3).
+pub trait FluxBackend: Send + Sync {
+    /// Get file/directory metadata.
+    fn stat(&self, path: &Path) -> Result<FileStat, crate::error::FluxError>;
+
+    /// List directory contents (non-recursive).
+    fn list_dir(&self, path: &Path) -> Result<Vec<FileEntry>, crate::error::FluxError>;
+
+    /// Open a file for reading, returns a boxed Read.
+    fn open_read(&self, path: &Path) -> Result<Box<dyn std::io::Read + Send>, crate::error::FluxError>;
+
+    /// Create/open a file for writing, returns a boxed Write.
+    fn open_write(&self, path: &Path) -> Result<Box<dyn std::io::Write + Send>, crate::error::FluxError>;
+
+    /// Create directory (and parents if needed).
+    fn create_dir_all(&self, path: &Path) -> Result<(), crate::error::FluxError>;
+
+    /// Check backend capabilities.
+    fn features(&self) -> BackendFeatures;
+}
