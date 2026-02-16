@@ -46,6 +46,11 @@ fn run(cli: Cli) -> Result<(), FluxError> {
                 source = %args.source.display(),
                 dest = %args.dest.display(),
                 recursive = args.recursive,
+                chunks = args.chunks,
+                verify = args.verify,
+                compress = args.compress,
+                limit = ?args.limit,
+                resume = args.resume,
                 "Copy command received"
             );
             transfer::execute_copy(args, cli.quiet)?;

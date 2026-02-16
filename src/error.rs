@@ -29,6 +29,19 @@ pub enum FluxError {
 
     #[error("Destination is inside source directory: {} -> {}", src.display(), dst.display())]
     DestinationIsSubdirectory { src: PathBuf, dst: PathBuf },
+
+    #[error("Checksum mismatch for {}: expected {expected}, got {actual}", path.display())]
+    ChecksumMismatch {
+        path: PathBuf,
+        expected: String,
+        actual: String,
+    },
+
+    #[error("Resume error: {0}")]
+    ResumeError(String),
+
+    #[error("Compression error: {0}")]
+    CompressionError(String),
 }
 
 impl FluxError {
@@ -52,6 +65,12 @@ impl FluxError {
             }
             FluxError::DestinationIsSubdirectory { .. } => {
                 Some("Choose a destination outside the source directory.")
+            }
+            FluxError::ChecksumMismatch { .. } => {
+                Some("The file may be corrupted. Try re-transferring.")
+            }
+            FluxError::ResumeError(_) => {
+                Some("Delete the .flux-resume.json manifest file and restart the transfer.")
             }
             _ => None,
         }
@@ -85,6 +104,12 @@ impl From<walkdir::Error> for FluxError {
                 std::io::Error::new(std::io::ErrorKind::Other, "walkdir error")
             }),
         }
+    }
+}
+
+impl From<serde_json::Error> for FluxError {
+    fn from(err: serde_json::Error) -> Self {
+        FluxError::Config(err.to_string())
     }
 }
 

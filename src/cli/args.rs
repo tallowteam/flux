@@ -41,4 +41,24 @@ pub struct CpArgs {
     /// Include only files matching glob pattern (can be repeated)
     #[arg(long, action = clap::ArgAction::Append)]
     pub include: Vec<String>,
+
+    /// Number of parallel chunks for transfer (0 = auto-detect)
+    #[arg(long, default_value = "0")]
+    pub chunks: usize,
+
+    /// Verify transfer integrity with BLAKE3 checksum
+    #[arg(long)]
+    pub verify: bool,
+
+    /// Enable zstd compression for transfer
+    #[arg(long)]
+    pub compress: bool,
+
+    /// Bandwidth limit (e.g., "10MB/s", "500KB/s")
+    #[arg(long)]
+    pub limit: Option<String>,
+
+    /// Resume interrupted transfer
+    #[arg(long)]
+    pub resume: bool,
 }
