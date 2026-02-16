@@ -95,3 +95,115 @@ impl From<std::path::StripPrefixError> for FluxError {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    #[test]
+    fn source_not_found_display_and_suggestion() {
+        let err = FluxError::SourceNotFound {
+            path: PathBuf::from("/tmp/missing.txt"),
+        };
+        let msg = format!("{}", err);
+        assert!(msg.contains("Source not found"));
+        assert!(msg.contains("missing.txt"));
+        assert_eq!(
+            err.suggestion(),
+            Some("Check the path exists and spelling is correct.")
+        );
+    }
+
+    #[test]
+    fn permission_denied_suggestion() {
+        let err = FluxError::PermissionDenied {
+            path: PathBuf::from("/root/secret"),
+        };
+        assert_eq!(
+            err.suggestion(),
+            Some("Try running with elevated privileges, or check file permissions.")
+        );
+    }
+
+    #[test]
+    fn is_directory_display_and_suggestion() {
+        let err = FluxError::IsDirectory {
+            path: PathBuf::from("/tmp/mydir"),
+        };
+        let msg = format!("{}", err);
+        assert!(msg.contains("use -r flag"));
+        assert_eq!(
+            err.suggestion(),
+            Some("Use 'flux cp -r <source> <dest>' for directory copies.")
+        );
+    }
+
+    #[test]
+    fn destination_not_writable_suggestion() {
+        let err = FluxError::DestinationNotWritable {
+            path: PathBuf::from("/readonly/dir"),
+        };
+        assert_eq!(
+            err.suggestion(),
+            Some("Check that the destination directory exists and you have write permission.")
+        );
+    }
+
+    #[test]
+    fn invalid_pattern_suggestion() {
+        let err = FluxError::InvalidPattern {
+            pattern: "[invalid".to_string(),
+            reason: "unclosed bracket".to_string(),
+        };
+        let msg = format!("{}", err);
+        assert!(msg.contains("[invalid"));
+        assert!(msg.contains("unclosed bracket"));
+        assert_eq!(
+            err.suggestion(),
+            Some("Check glob syntax. Examples: '*.log', '**/*.tmp', 'build/'")
+        );
+    }
+
+    #[test]
+    fn destination_is_subdirectory_suggestion() {
+        let err = FluxError::DestinationIsSubdirectory {
+            src: PathBuf::from("/home/user/project"),
+            dst: PathBuf::from("/home/user/project/backup"),
+        };
+        let msg = format!("{}", err);
+        assert!(msg.contains("Destination is inside source directory"));
+        assert_eq!(
+            err.suggestion(),
+            Some("Choose a destination outside the source directory.")
+        );
+    }
+
+    #[test]
+    fn io_error_no_suggestion() {
+        let io_err = std::io::Error::new(std::io::ErrorKind::NotFound, "file gone");
+        let err: FluxError = io_err.into();
+        assert!(err.suggestion().is_none());
+    }
+
+    #[test]
+    fn config_error_no_suggestion() {
+        let err = FluxError::Config("bad toml".to_string());
+        let msg = format!("{}", err);
+        assert!(msg.contains("Configuration error"));
+        assert!(msg.contains("bad toml"));
+        assert!(err.suggestion().is_none());
+    }
+
+    #[test]
+    fn from_strip_prefix_error() {
+        let path = PathBuf::from("/a/b");
+        let result = path.strip_prefix("/c/d");
+        assert!(result.is_err());
+        let err: FluxError = result.unwrap_err().into();
+        match err {
+            FluxError::Io { .. } => {} // expected
+            other => panic!("Expected Io variant, got: {:?}", other),
+        }
+    }
+}
