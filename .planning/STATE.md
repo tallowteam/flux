@@ -59,6 +59,11 @@ Recent decisions affecting current work:
 - [02-01] auto_chunk_count capped at std::thread::available_parallelism to avoid over-subscribing CPU
 - [02-01] Positional I/O uses cfg(unix)/cfg(windows) with FileExt traits, no Mutex needed for parallel reads
 - [02-01] read_at_exact and write_at_all retry on Interrupted errors, matching std behavior
+- [02-02] Parallel copy uses rayon par_iter_mut with try_for_each for error propagation across threads
+- [02-02] Destination file pre-allocated with set_len before parallel writes for correctness
+- [02-02] Per-chunk BLAKE3 hashes computed during transfer regardless of --verify flag
+- [02-02] Post-transfer --verify does whole-file hash comparison for maximum confidence
+- [02-02] 256KB buffer per chunk thread matches existing Phase 1 buffer sizes
 - [02-03] Resume manifest stored as .flux-resume.json sidecar next to destination for human-readability
 - [02-03] Bandwidth limit forces sequential copy to avoid shared token bucket complexity
 - [02-03] Compression infrastructure ready for Phase 3; local copies pass through unchanged
