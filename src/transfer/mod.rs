@@ -16,8 +16,13 @@ use crate::cli::args::CpArgs;
 use crate::error::FluxError;
 use crate::progress::bar::{create_directory_progress, create_file_progress};
 
+use self::checksum::hash_file;
+use self::chunk::{auto_chunk_count, chunk_file};
 use self::copy::copy_file_with_progress;
 use self::filter::TransferFilter;
+use self::parallel::parallel_copy_chunked;
+use self::resume::TransferManifest;
+use self::throttle::parse_bandwidth;
 
 /// Aggregated result of a directory copy operation.
 ///
@@ -95,6 +100,32 @@ pub fn execute_copy(args: CpArgs, quiet: bool) -> Result<(), FluxError> {
         }
     }
 
+    // Parse and validate bandwidth limit early
+    let _bandwidth_limit: Option<u64> = if let Some(ref limit_str) = args.limit {
+        let bps = parse_bandwidth(limit_str)?;
+        tracing::info!("Bandwidth limit: {} bytes/sec", bps);
+        Some(bps)
+    } else {
+        None
+    };
+
+    // Log compression status
+    if args.compress {
+        tracing::info!("Compression enabled (zstd, most effective for network transfers)");
+    }
+
+    // Determine chunk strategy
+    // When --limit is set, fall back to single-chunk sequential copy with
+    // throttled I/O to avoid complexity of shared token buckets across threads.
+    // Phase 3 optimization: shared limiter across parallel threads.
+    let chunk_count = if _bandwidth_limit.is_some() {
+        1 // Sequential for throttled transfers
+    } else if args.chunks > 0 {
+        args.chunks
+    } else {
+        auto_chunk_count(source_meta.len())
+    };
+
     if source_meta.is_file() {
         // For single file: check if filter excludes it
         if !filter.should_transfer(source) {
@@ -118,16 +149,169 @@ pub fn execute_copy(args: CpArgs, quiet: bool) -> Result<(), FluxError> {
         };
 
         let size = source_meta.len();
-        let progress = create_file_progress(size, quiet);
 
-        let bytes = copy_file_with_progress(source, &final_dest, &progress)?;
+        // Resume support: load existing manifest if --resume is set
+        let mut resume_chunks = if args.resume {
+            match TransferManifest::load(&final_dest)? {
+                Some(manifest) if manifest.is_compatible(source, size) => {
+                    let completed = manifest.completed_count();
+                    let total = manifest.chunk_count;
+                    let completed_bytes = manifest.completed_bytes();
+                    tracing::info!(
+                        "Resuming transfer: {}/{} chunks already done ({} bytes)",
+                        completed,
+                        total,
+                        completed_bytes
+                    );
+                    if !quiet && completed > 0 {
+                        eprintln!(
+                            "Resuming: {}/{} chunks complete",
+                            completed, total
+                        );
+                    }
+                    Some(manifest.chunks)
+                }
+                Some(_manifest) => {
+                    // Incompatible manifest -- source or size changed
+                    tracing::warn!(
+                        "Existing manifest incompatible (source/size changed), starting fresh"
+                    );
+                    TransferManifest::cleanup(&final_dest)?;
+                    None
+                }
+                None => None,
+            }
+        } else {
+            None
+        };
 
-        tracing::info!("Copied {} bytes", bytes);
+        if chunk_count > 1 && size > 0 {
+            // Parallel chunked copy path
+            let progress = create_file_progress(size, quiet);
+
+            let chunks = if let Some(ref mut existing) = resume_chunks {
+                // Use resumed chunks -- set progress to reflect completed work
+                let completed_bytes: u64 = existing.iter()
+                    .filter(|c| c.completed)
+                    .map(|c| c.length)
+                    .sum();
+                progress.set_position(completed_bytes);
+                existing
+            } else {
+                // Fresh chunk plan
+                resume_chunks = Some(chunk_file(size, chunk_count));
+                resume_chunks.as_mut().unwrap()
+            };
+
+            // Save initial manifest if --resume
+            if args.resume {
+                let manifest = TransferManifest::new(
+                    source.clone(),
+                    final_dest.clone(),
+                    size,
+                    chunks.clone(),
+                    args.compress,
+                );
+                manifest.save(&final_dest)?;
+            }
+
+            parallel_copy_chunked(source, &final_dest, chunks, &progress)?;
+            progress.finish_with_message("done");
+
+            // Save completed manifest and then clean up
+            if args.resume {
+                TransferManifest::cleanup(&final_dest)?;
+            }
+
+            tracing::info!(
+                "Copied {} bytes using {} parallel chunks",
+                size,
+                chunk_count
+            );
+        } else {
+            // Sequential copy path (small files or single chunk)
+            let progress = create_file_progress(size, quiet);
+
+            // Save initial manifest if --resume (even for sequential)
+            if args.resume && size > 0 {
+                let fresh_chunks = resume_chunks.unwrap_or_else(|| chunk_file(size, 1));
+                let manifest = TransferManifest::new(
+                    source.clone(),
+                    final_dest.clone(),
+                    size,
+                    fresh_chunks,
+                    args.compress,
+                );
+                manifest.save(&final_dest)?;
+            }
+
+            if let Some(bps) = _bandwidth_limit {
+                // Throttled sequential copy
+                use std::io::{BufReader, BufWriter, Read, Write};
+                use self::throttle::ThrottledReader;
+
+                let src_file = std::fs::File::open(source).map_err(|e| FluxError::Io { source: e })?;
+                let reader = BufReader::with_capacity(256 * 1024, src_file);
+                let mut throttled = ThrottledReader::new(reader, bps);
+
+                // Ensure parent dir exists
+                if let Some(parent) = final_dest.parent() {
+                    if !parent.as_os_str().is_empty() && !parent.exists() {
+                        std::fs::create_dir_all(parent)?;
+                    }
+                }
+
+                let dst_file = std::fs::File::create(&final_dest).map_err(|e| FluxError::Io { source: e })?;
+                let mut writer = BufWriter::with_capacity(256 * 1024, dst_file);
+
+                let mut buf = [0u8; 256 * 1024];
+                let mut total_bytes = 0u64;
+                loop {
+                    let n = throttled.read(&mut buf)?;
+                    if n == 0 {
+                        break;
+                    }
+                    writer.write_all(&buf[..n])?;
+                    total_bytes += n as u64;
+                    progress.set_position(total_bytes);
+                }
+                writer.flush()?;
+                progress.finish_with_message("done");
+                tracing::info!("Copied {} bytes (throttled to {} B/s)", total_bytes, bps);
+            } else {
+                let bytes = copy_file_with_progress(source, &final_dest, &progress)?;
+                tracing::info!("Copied {} bytes", bytes);
+            }
+
+            // Clean up resume manifest on success
+            if args.resume {
+                TransferManifest::cleanup(&final_dest)?;
+            }
+        }
+
+        // Post-transfer verification if --verify is set
+        if args.verify && source_meta.len() > 0 {
+            let source_hash = hash_file(source)?;
+            let dest_hash = hash_file(&final_dest)?;
+
+            if source_hash != dest_hash {
+                return Err(FluxError::ChecksumMismatch {
+                    path: final_dest.clone(),
+                    expected: source_hash,
+                    actual: dest_hash,
+                });
+            }
+
+            tracing::info!("Integrity verified (BLAKE3)");
+            if !quiet {
+                eprintln!("Integrity verified (BLAKE3)");
+            }
+        }
 
         Ok(())
     } else if source_meta.is_dir() {
-        // Directory copy with filtering
-        let result = copy_directory(source, dest, &filter, quiet)?;
+        // Directory copy with filtering and optional chunking/verification
+        let result = copy_directory(source, dest, &filter, quiet, chunk_count, args.verify)?;
 
         tracing::info!(
             "Copied {} file(s), {} bytes",
@@ -183,6 +367,8 @@ fn copy_directory(
     dest: &Path,
     filter: &TransferFilter,
     quiet: bool,
+    chunks: usize,
+    verify: bool,
 ) -> Result<TransferResult, FluxError> {
     // Detect trailing slash before normalizing the path
     let source_str = source.to_string_lossy();
@@ -289,12 +475,55 @@ fn copy_directory(
                 }
             }
 
-            // Use a hidden progress bar for per-file copy (directory progress tracks file count)
-            let file_progress = ProgressBar::hidden();
+            // Determine per-file chunk count
+            let file_size = entry.metadata().map(|m| m.len()).unwrap_or(0);
+            let file_chunk_count = if chunks > 0 {
+                // Use explicit chunk setting, but only if file is non-empty
+                // and chunk count > 1 and file is large enough
+                let effective = if chunks > 1 { chunks } else { 1 };
+                effective
+            } else {
+                auto_chunk_count(file_size)
+            };
 
-            match copy_file_with_progress(entry.path(), &dest_path, &file_progress) {
+            let copy_result = if file_chunk_count > 1 && file_size > 0 {
+                // Parallel chunked copy for this file
+                let file_progress = ProgressBar::hidden();
+                let mut file_chunks = chunk_file(file_size, file_chunk_count);
+                parallel_copy_chunked(entry.path(), &dest_path, &mut file_chunks, &file_progress)
+                    .map(|_| file_size)
+            } else {
+                // Sequential copy for small files
+                let file_progress = ProgressBar::hidden();
+                copy_file_with_progress(entry.path(), &dest_path, &file_progress)
+            };
+
+            match copy_result {
                 Ok(bytes) => {
-                    result.add_success(bytes);
+                    // Post-transfer verification for this file if --verify
+                    if verify && file_size > 0 {
+                        match (hash_file(entry.path()), hash_file(&dest_path)) {
+                            (Ok(src_hash), Ok(dst_hash)) if src_hash != dst_hash => {
+                                result.add_error(
+                                    entry.path().to_path_buf(),
+                                    FluxError::ChecksumMismatch {
+                                        path: dest_path.clone(),
+                                        expected: src_hash,
+                                        actual: dst_hash,
+                                    },
+                                );
+                            }
+                            (Err(e), _) | (_, Err(e)) => {
+                                result.add_error(entry.path().to_path_buf(), e);
+                            }
+                            _ => {
+                                // Hashes match, file verified
+                                result.add_success(bytes);
+                            }
+                        }
+                    } else {
+                        result.add_success(bytes);
+                    }
                 }
                 Err(e) => {
                     result.add_error(entry.path().to_path_buf(), e);
