@@ -2,6 +2,7 @@ pub mod chunk;
 pub mod copy;
 pub mod filter;
 pub mod parallel;
+pub mod resume;
 
 use std::path::{Path, PathBuf};
 
