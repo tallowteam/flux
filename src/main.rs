@@ -5,6 +5,8 @@ mod backend;
 mod cli;
 mod config;
 mod error;
+mod progress;
+mod transfer;
 
 use cli::args::{Cli, Commands};
 use config::types::Verbosity;
@@ -40,21 +42,13 @@ fn main() {
 fn run(cli: Cli) -> Result<(), FluxError> {
     match cli.command {
         Commands::Cp(args) => {
-            tracing::info!(
+            tracing::debug!(
                 source = %args.source.display(),
                 dest = %args.dest.display(),
                 recursive = args.recursive,
                 "Copy command received"
             );
-            eprintln!(
-                "Copy: {} -> {} (recursive: {}, excludes: {}, includes: {})",
-                args.source.display(),
-                args.dest.display(),
-                args.recursive,
-                args.exclude.len(),
-                args.include.len(),
-            );
-            // Actual copy implementation will be wired in Plan 03
+            transfer::execute_copy(args, cli.quiet)?;
             Ok(())
         }
     }
