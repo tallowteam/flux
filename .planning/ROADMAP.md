@@ -32,12 +32,12 @@ Decimal phases appear between their surrounding integers in numeric order.
   3. User can see real-time progress (percentage, speed, ETA) during transfer
   4. User can exclude files with `--exclude "*.log"` glob patterns
   5. Helpful error messages appear when paths are invalid or access denied
-**Plans**: TBD
+**Plans**: 3 plans
 
 Plans:
-- [ ] 01-01: TBD
-- [ ] 01-02: TBD
-- [ ] 01-03: TBD
+- [ ] 01-01-PLAN.md — Project scaffolding, CLI parsing, error types, config, verbosity
+- [ ] 01-02-PLAN.md — FluxBackend trait, LocalBackend, single-file copy with progress
+- [ ] 01-03-PLAN.md — Glob filtering, recursive directory copy, integration tests
 
 ### Phase 2: Performance
 **Goal**: Transfers saturate network bandwidth through parallelization and smart compression
@@ -142,7 +142,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Foundation | 0/TBD | Not started | - |
+| 1. Foundation | 0/3 | Planned | - |
 | 2. Performance | 0/TBD | Not started | - |
 | 3. Network Protocols | 0/TBD | Not started | - |
 | 4. User Experience | 0/TBD | Not started | - |
