@@ -1,4 +1,4 @@
-//! Cross-platform positional I/O primitives for parallel chunk transfers.
+//! Cross-platform positional I/O primitives and parallel chunk transfer engine.
 //!
 //! Provides `read_at` and `write_at` functions that use OS-specific APIs
 //! (Unix `pread`/`pwrite`, Windows `seek_read`/`seek_write`) to read/write
@@ -6,9 +6,20 @@
 //!
 //! Also provides `read_at_exact` and `write_at_all` wrappers that handle
 //! partial reads/writes, analogous to `Read::read_exact` and `Write::write_all`.
+//!
+//! The `parallel_copy_chunked` function uses rayon to copy file chunks in
+//! parallel, computing per-chunk BLAKE3 checksums during transfer.
 
-use std::fs::File;
+use std::fs::{File, OpenOptions};
 use std::io;
+use std::path::Path;
+use std::sync::Arc;
+
+use indicatif::ProgressBar;
+use rayon::prelude::*;
+
+use crate::error::FluxError;
+use crate::transfer::chunk::ChunkPlan;
 
 /// Read bytes from `file` at the given byte `offset` into `buf`.
 ///
@@ -110,6 +121,115 @@ pub fn write_at_all(file: &File, offset: u64, buf: &[u8]) -> io::Result<()> {
             Err(e) => return Err(e),
         }
     }
+
+    Ok(())
+}
+
+/// Buffer size for per-chunk I/O during parallel copy: 256KB.
+const CHUNK_BUF_SIZE: usize = 256 * 1024;
+
+/// Copy a file using parallel chunked I/O with per-chunk BLAKE3 checksums.
+///
+/// Opens the source file for reading and creates/pre-allocates the destination
+/// file to the total size. Each chunk is processed in parallel using rayon's
+/// parallel iterator: read from source at the chunk's offset, write to dest
+/// at the same offset, and compute a BLAKE3 hash of the chunk data.
+///
+/// After each buffer write, the progress bar is incremented by the number of
+/// bytes written.
+///
+/// # Arguments
+/// * `source` - Path to the source file
+/// * `dest` - Path to the destination file (will be created/truncated)
+/// * `chunks` - Mutable slice of ChunkPlans describing byte ranges to copy
+/// * `progress` - Progress bar to update with bytes transferred
+///
+/// # Errors
+/// Returns `FluxError` if any I/O operation fails. If a chunk fails, the
+/// entire operation is aborted (rayon's `try_for_each` short-circuits).
+pub fn parallel_copy_chunked(
+    source: &Path,
+    dest: &Path,
+    chunks: &mut [ChunkPlan],
+    progress: &ProgressBar,
+) -> Result<(), FluxError> {
+    // Open source file (read-only), wrap in Arc for sharing across threads
+    let src_file = File::open(source).map_err(|e| match e.kind() {
+        io::ErrorKind::NotFound => FluxError::SourceNotFound {
+            path: source.to_path_buf(),
+        },
+        io::ErrorKind::PermissionDenied => FluxError::PermissionDenied {
+            path: source.to_path_buf(),
+        },
+        _ => FluxError::Io { source: e },
+    })?;
+    let src_file = Arc::new(src_file);
+
+    // Compute total size from chunks for pre-allocation
+    let total_size: u64 = chunks.iter().map(|c| c.offset + c.length).max().unwrap_or(0);
+
+    // Ensure dest parent directory exists
+    if let Some(parent) = dest.parent() {
+        if !parent.as_os_str().is_empty() && !parent.exists() {
+            std::fs::create_dir_all(parent).map_err(|e| match e.kind() {
+                io::ErrorKind::PermissionDenied => FluxError::DestinationNotWritable {
+                    path: parent.to_path_buf(),
+                },
+                _ => FluxError::Io { source: e },
+            })?;
+        }
+    }
+
+    // Create dest file with read+write permissions, pre-allocate to full size
+    let dst_file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .open(dest)
+        .map_err(|e| match e.kind() {
+            io::ErrorKind::PermissionDenied => FluxError::DestinationNotWritable {
+                path: dest.to_path_buf(),
+            },
+            _ => FluxError::Io { source: e },
+        })?;
+
+    // Pre-allocate destination file to full size
+    dst_file
+        .set_len(total_size)
+        .map_err(|e| FluxError::Io { source: e })?;
+
+    let dst_file = Arc::new(dst_file);
+
+    // Process chunks in parallel using rayon
+    chunks
+        .par_iter_mut()
+        .filter(|chunk| !chunk.completed)
+        .try_for_each(|chunk| -> Result<(), FluxError> {
+            let mut buf = vec![0u8; CHUNK_BUF_SIZE];
+            let mut remaining = chunk.length;
+            let mut chunk_offset = chunk.offset;
+            let mut hasher = blake3::Hasher::new();
+
+            while remaining > 0 {
+                let to_read = std::cmp::min(remaining, CHUNK_BUF_SIZE as u64) as usize;
+                let n = read_at(&src_file, chunk_offset, &mut buf[..to_read])?;
+                if n == 0 {
+                    break;
+                }
+
+                write_at_all(&dst_file, chunk_offset, &buf[..n])?;
+                hasher.update(&buf[..n]);
+                progress.inc(n as u64);
+
+                chunk_offset += n as u64;
+                remaining -= n as u64;
+            }
+
+            chunk.checksum = Some(hasher.finalize().to_hex().to_string());
+            chunk.completed = true;
+            Ok(())
+        })?;
 
     Ok(())
 }
@@ -362,5 +482,136 @@ mod tests {
         assert_eq!(&buf1, b"01234");
         assert_eq!(&buf2, b"ABCDE");
         assert_eq!(&buf3, b"FGHIJ");
+    }
+
+    // ========================================================================
+    // parallel_copy_chunked tests
+    // ========================================================================
+
+    #[test]
+    fn parallel_copy_chunked_copies_file_correctly() {
+        use crate::transfer::chunk::chunk_file;
+
+        let dir = tempfile::tempdir().unwrap();
+        let src_path = dir.path().join("source.bin");
+        let dst_path = dir.path().join("dest.bin");
+
+        // Create 1MB file with known pattern
+        let data: Vec<u8> = (0..1_048_576u32).map(|i| (i % 256) as u8).collect();
+        std::fs::write(&src_path, &data).unwrap();
+
+        let mut chunks = chunk_file(data.len() as u64, 4);
+        let pb = ProgressBar::hidden();
+
+        parallel_copy_chunked(&src_path, &dst_path, &mut chunks, &pb).unwrap();
+
+        // Verify dest content matches source byte-for-byte
+        let dest_data = std::fs::read(&dst_path).unwrap();
+        assert_eq!(dest_data.len(), data.len());
+        assert_eq!(dest_data, data);
+    }
+
+    #[test]
+    fn parallel_copy_chunked_populates_checksums() {
+        use crate::transfer::chunk::chunk_file;
+
+        let dir = tempfile::tempdir().unwrap();
+        let src_path = dir.path().join("source.bin");
+        let dst_path = dir.path().join("dest.bin");
+
+        let data: Vec<u8> = (0..1_048_576u32).map(|i| (i % 256) as u8).collect();
+        std::fs::write(&src_path, &data).unwrap();
+
+        let mut chunks = chunk_file(data.len() as u64, 4);
+        let pb = ProgressBar::hidden();
+
+        parallel_copy_chunked(&src_path, &dst_path, &mut chunks, &pb).unwrap();
+
+        // All chunks should be completed with checksums
+        for chunk in &chunks {
+            assert!(chunk.completed, "chunk {} should be completed", chunk.index);
+            assert!(
+                chunk.checksum.is_some(),
+                "chunk {} should have checksum",
+                chunk.index
+            );
+            let checksum = chunk.checksum.as_ref().unwrap();
+            assert_eq!(checksum.len(), 64, "checksum should be 64 hex chars");
+            assert!(
+                checksum.chars().all(|c| c.is_ascii_hexdigit()),
+                "checksum should be hex"
+            );
+        }
+    }
+
+    #[test]
+    fn parallel_copy_chunked_single_chunk() {
+        use crate::transfer::chunk::chunk_file;
+
+        let dir = tempfile::tempdir().unwrap();
+        let src_path = dir.path().join("source.bin");
+        let dst_path = dir.path().join("dest.bin");
+
+        let data: Vec<u8> = (0..500_000u32).map(|i| (i % 256) as u8).collect();
+        std::fs::write(&src_path, &data).unwrap();
+
+        let mut chunks = chunk_file(data.len() as u64, 1);
+        let pb = ProgressBar::hidden();
+
+        parallel_copy_chunked(&src_path, &dst_path, &mut chunks, &pb).unwrap();
+
+        let dest_data = std::fs::read(&dst_path).unwrap();
+        assert_eq!(dest_data, data);
+        assert!(chunks[0].completed);
+        assert!(chunks[0].checksum.is_some());
+    }
+
+    #[test]
+    fn parallel_copy_chunked_progress_tracks_bytes() {
+        use crate::transfer::chunk::chunk_file;
+
+        let dir = tempfile::tempdir().unwrap();
+        let src_path = dir.path().join("source.bin");
+        let dst_path = dir.path().join("dest.bin");
+
+        let size = 100_000u64;
+        let data: Vec<u8> = (0..size as u32).map(|i| (i % 256) as u8).collect();
+        std::fs::write(&src_path, &data).unwrap();
+
+        let mut chunks = chunk_file(size, 4);
+        let pb = ProgressBar::hidden();
+
+        parallel_copy_chunked(&src_path, &dst_path, &mut chunks, &pb).unwrap();
+
+        // Progress bar should have tracked all bytes
+        assert_eq!(pb.position(), size);
+    }
+
+    #[test]
+    fn parallel_copy_chunked_skips_completed_chunks() {
+        use crate::transfer::chunk::chunk_file;
+
+        let dir = tempfile::tempdir().unwrap();
+        let src_path = dir.path().join("source.bin");
+        let dst_path = dir.path().join("dest.bin");
+
+        let data: Vec<u8> = (0..1000u32).map(|i| (i % 256) as u8).collect();
+        std::fs::write(&src_path, &data).unwrap();
+
+        let mut chunks = chunk_file(data.len() as u64, 2);
+        // Mark first chunk as already completed
+        chunks[0].completed = true;
+        chunks[0].checksum = Some("already_done".to_string());
+
+        let pb = ProgressBar::hidden();
+
+        parallel_copy_chunked(&src_path, &dst_path, &mut chunks, &pb).unwrap();
+
+        // First chunk should retain its original checksum (was not re-processed)
+        assert_eq!(chunks[0].checksum.as_deref(), Some("already_done"));
+        // Second chunk should have been processed
+        assert!(chunks[1].completed);
+        assert!(chunks[1].checksum.is_some());
+        assert_ne!(chunks[1].checksum.as_deref(), Some("already_done"));
     }
 }

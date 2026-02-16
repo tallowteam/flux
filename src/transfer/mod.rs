@@ -1,8 +1,11 @@
+pub mod checksum;
 pub mod chunk;
+pub mod compress;
 pub mod copy;
 pub mod filter;
 pub mod parallel;
 pub mod resume;
+pub mod throttle;
 
 use std::path::{Path, PathBuf};
 
