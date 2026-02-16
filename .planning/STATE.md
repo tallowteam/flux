@@ -5,23 +5,23 @@
 See: .planning/PROJECT.md (updated 2026-02-16)
 
 **Core value:** Transfer files at maximum network speed with zero friction
-**Current focus:** Phase 2 - Performance
+**Current focus:** Phase 3 - Network Protocols
 
 ## Current Position
 
-Phase: 2 of 7 (Performance)
-Plan: 3 of 3 in current phase
-Status: Phase Complete
-Last activity: 2026-02-16 -- Completed 02-03-PLAN.md
+Phase: 3 of 7 (Network Protocols)
+Plan: 1 of 4 in current phase
+Status: In Progress
+Last activity: 2026-02-16 -- Completed 03-01-PLAN.md
 
-Progress: [######----] 29%
+Progress: [#######---] 33%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 6
-- Average duration: 17min
-- Total execution time: 1.7 hours
+- Total plans completed: 7
+- Average duration: 16min
+- Total execution time: 1.8 hours
 
 **By Phase:**
 
@@ -29,10 +29,11 @@ Progress: [######----] 29%
 |-------|-------|-------|----------|
 | 01-foundation | 3/3 | 73min | 24min |
 | 02-performance | 3/3 | 22min | 7min |
+| 03-network-protocols | 1/4 | 7min | 7min |
 
 **Recent Trend:**
-- Last 5 plans: 01-02 (17min), 01-03 (7min), 02-01 (5min), 02-02 (10min), 02-03 (7min)
-- Trend: Strongly accelerating (established codebase + patterns reduce each plan's time)
+- Last 5 plans: 01-03 (7min), 02-01 (5min), 02-02 (10min), 02-03 (7min), 03-01 (7min)
+- Trend: Stable at ~7min/plan for established codebase
 
 *Updated after each plan completion*
 
@@ -69,6 +70,11 @@ Recent decisions affecting current work:
 - [02-03] Compression infrastructure ready for Phase 3; local copies pass through unchanged
 - [02-03] Manifest uses crash-safe writes (flush + sync_all) to survive interruptions
 - [02-03] Incompatible manifests auto-deleted and transfer restarts fresh
+- [03-01] CpArgs source/dest migrated from PathBuf to String to preserve network URI formats
+- [03-01] Protocol detection order: UNC backslash > UNC forward > URL scheme > local fallback
+- [03-01] Windows drive letters (C:) detected as local paths despite URL parser treating them as schemes
+- [03-01] Network backends return ProtocolError stubs until Plans 02-04 implement them
+- [03-01] Auth enum includes Password, KeyFile, Agent variants as skeleton for Phase 5
 
 ### Pending Todos
 
@@ -81,8 +87,8 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-02-16
-Stopped at: Completed 02-03-PLAN.md (resume, compression, throttling -- Phase 2 complete, 124 tests)
-Resume file: .planning/phases/02-performance/02-03-SUMMARY.md
+Stopped at: Completed 03-01-PLAN.md (protocol detection, backend factory, PathBuf->String migration -- 151 tests)
+Resume file: .planning/phases/03-network-protocols/03-01-SUMMARY.md
 
 ---
 *State initialized: 2026-02-16*
