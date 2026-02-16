@@ -65,12 +65,13 @@ Plans:
   2. User can transfer to SFTP server with `flux cp file.txt sftp://user@host/path/`
   3. User can transfer to WebDAV endpoint with `flux cp file.txt https://server/webdav/`
   4. Tool auto-detects protocol from path format (no `--protocol` flag needed)
-**Plans**: TBD
+**Plans**: 4 plans
 
 Plans:
-- [ ] 03-01: TBD
-- [ ] 03-02: TBD
-- [ ] 03-03: TBD
+- [ ] 03-01-PLAN.md — Protocol detection, CLI args String migration, backend factory
+- [ ] 03-02-PLAN.md — SFTP backend with ssh2 crate
+- [ ] 03-03-PLAN.md — SMB backend with platform-conditional support (Windows native + pavao)
+- [ ] 03-04-PLAN.md — WebDAV backend with reqwest_dav sync-over-async bridge
 
 ### Phase 4: User Experience
 **Goal**: User can manage paths, queues, and configuration for efficient repeated transfers
