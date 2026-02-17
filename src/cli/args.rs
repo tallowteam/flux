@@ -295,4 +295,32 @@ pub struct SyncArgs {
     /// Preview sync changes without executing
     #[arg(long)]
     pub dry_run: bool,
+
+    /// Delete files in dest that don't exist in source
+    #[arg(long)]
+    pub delete: bool,
+
+    /// Watch source for changes and sync continuously
+    #[arg(long)]
+    pub watch: bool,
+
+    /// Schedule recurring syncs with cron expression (e.g., "*/5 * * * *")
+    #[arg(long)]
+    pub schedule: Option<String>,
+
+    /// Exclude files matching glob pattern (can be repeated)
+    #[arg(long, action = clap::ArgAction::Append)]
+    pub exclude: Vec<String>,
+
+    /// Include only files matching glob pattern (can be repeated)
+    #[arg(long, action = clap::ArgAction::Append)]
+    pub include: Vec<String>,
+
+    /// Verify integrity with BLAKE3 checksum after sync
+    #[arg(long)]
+    pub verify: bool,
+
+    /// Force sync even when source is empty (safety override for --delete)
+    #[arg(long)]
+    pub force: bool,
 }

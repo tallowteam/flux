@@ -70,6 +70,9 @@ pub enum FluxError {
 
     #[error("Transfer error: {0}")]
     TransferError(String),
+
+    #[error("Sync error: {0}")]
+    SyncError(String),
 }
 
 impl FluxError {
@@ -123,6 +126,9 @@ impl FluxError {
             }
             FluxError::TransferError(_) => {
                 Some("Check that the receiver is running (`flux receive`) and reachable on the network.")
+            }
+            FluxError::SyncError(_) => {
+                Some("Check that source and destination directories exist and are accessible.")
             }
             _ => None,
         }
