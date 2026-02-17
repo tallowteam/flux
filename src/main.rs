@@ -11,6 +11,7 @@ mod progress;
 mod protocol;
 mod queue;
 mod security;
+mod sync;
 mod transfer;
 mod tui;
 
@@ -385,9 +386,8 @@ fn run(cli: Cli) -> Result<(), FluxError> {
             })?;
             Ok(())
         }
-        Commands::Sync(_args) => {
-            eprintln!("flux sync: not yet implemented (coming in Phase 7)");
-            Ok(())
+        Commands::Sync(args) => {
+            sync::execute_sync(args, cli.quiet)
         }
     }
 }
