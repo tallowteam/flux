@@ -8,7 +8,7 @@
   <br><br>
   <a href="https://github.com/tallowteam/flux/actions"><img src="https://img.shields.io/github/actions/workflow/status/tallowteam/flux/ci.yml?style=flat-square&label=CI" alt="CI"></a>
   <a href="https://github.com/tallowteam/flux/releases"><img src="https://img.shields.io/github/v/release/tallowteam/flux?style=flat-square&color=blue" alt="Release"></a>
-  <a href="https://github.com/tallowteam/flux/blob/master/LICENSE"><img src="https://img.shields.io/badge/license-MIT-green?style=flat-square" alt="License"></a>
+  <a href="https://github.com/tallowteam/flux/blob/master/LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0-green?style=flat-square" alt="License"></a>
   <a href="https://www.rust-lang.org/"><img src="https://img.shields.io/badge/built%20with-Rust-E57324?style=flat-square&logo=rust&logoColor=white" alt="Built with Rust"></a>
 </p>
 
@@ -763,7 +763,9 @@ cargo test
 
 ## License
 
-MIT License. See [LICENSE](LICENSE) for details.
+AGPL-3.0 License. See [LICENSE](LICENSE) for details.
+
+This means you're free to use, modify, and distribute Flux — but if you modify it and offer it as a service (or distribute it), you must release your source code under the same license.
 
 ---
 
