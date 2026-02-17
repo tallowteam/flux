@@ -10,6 +10,7 @@ use ratatui::widgets::{Block, Borders, Paragraph, Tabs};
 use super::action::Action;
 use super::components::Component;
 use super::components::dashboard::DashboardComponent;
+use super::components::file_browser::FileBrowserComponent;
 use super::components::status_bar::StatusBar;
 use super::event::{Event, EventHandler};
 use super::terminal;
@@ -84,6 +85,8 @@ pub struct App {
     status_bar: StatusBar,
     /// Dashboard tab component.
     dashboard: DashboardComponent,
+    /// File browser tab component.
+    file_browser: FileBrowserComponent,
 }
 
 impl App {
@@ -97,6 +100,7 @@ impl App {
             should_quit: false,
             status_bar: StatusBar::new(),
             dashboard,
+            file_browser: FileBrowserComponent::new(),
         }
     }
 
@@ -139,6 +143,7 @@ impl App {
                 // Delegate to active tab component
                 match self.active_tab {
                     ActiveTab::Dashboard => self.dashboard.handle_key_event(key),
+                    ActiveTab::FileBrowser => self.file_browser.handle_key_event(key),
                     _ => Action::Noop,
                 }
             }
@@ -189,10 +194,12 @@ impl App {
             ActiveTab::Dashboard => {
                 self.dashboard.render(frame, chunks[1]);
             }
+            ActiveTab::FileBrowser => {
+                self.file_browser.render(frame, chunks[1]);
+            }
             _ => {
                 let content_title = format!(" {} ", self.active_tab.name());
                 let content_text = match self.active_tab {
-                    ActiveTab::FileBrowser => "File browser will appear here.",
                     ActiveTab::Queue => "Transfer queue will appear here.",
                     ActiveTab::History => "Transfer history will appear here.",
                     _ => unreachable!(),

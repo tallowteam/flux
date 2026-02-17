@@ -4,6 +4,7 @@
 //! key event handling, state updates, and rendering.
 
 pub mod dashboard;
+pub mod file_browser;
 pub mod status_bar;
 
 use ratatui::Frame;
