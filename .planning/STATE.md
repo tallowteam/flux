@@ -10,18 +10,18 @@ See: .planning/PROJECT.md (updated 2026-02-16)
 ## Current Position
 
 Phase: 4 of 7 (User Experience)
-Plan: 1 of 4 in current phase
+Plan: 2 of 4 in current phase
 Status: In Progress
-Last activity: 2026-02-17 -- Completed 04-01-PLAN.md (Path alias system)
+Last activity: 2026-02-17 -- Completed 04-02-PLAN.md (Configuration and conflict handling)
 
-Progress: [###########] 48%
+Progress: [############] 52%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 11
-- Average duration: 14min
-- Total execution time: 2.7 hours
+- Total plans completed: 12
+- Average duration: 13min
+- Total execution time: 2.8 hours
 
 **By Phase:**
 
@@ -30,11 +30,11 @@ Progress: [###########] 48%
 | 01-foundation | 3/3 | 73min | 24min |
 | 02-performance | 3/3 | 22min | 7min |
 | 03-network-protocols | 4/4 | 55min | 14min |
-| 04-user-experience | 1/4 | 6min | 6min |
+| 04-user-experience | 2/4 | 12min | 6min |
 
 **Recent Trend:**
-- Last 5 plans: 03-01 (7min), 03-04 (12min), 03-03 (12min), 03-02 (24min), 04-01 (6min)
-- Trend: Path alias plan fast at 6min (no complex dependencies)
+- Last 5 plans: 03-04 (12min), 03-03 (12min), 03-02 (24min), 04-01 (6min), 04-02 (6min)
+- Trend: Config + conflict handling plan fast at 6min (leveraged existing infrastructure)
 
 *Updated after each plan completion*
 
@@ -94,6 +94,13 @@ Recent decisions affecting current work:
 - [04-01] Atomic writes via temp file + rename for crash safety on alias save
 - [04-01] Single-char alias names rejected to prevent drive letter collision (C:)
 - [04-01] Reserved URL scheme names (sftp, ssh, smb, etc.) rejected at add time
+- [04-02] Config loaded lazily inside execute_copy, not at CLI startup (keeps --help fast)
+- [04-02] CLI flags override config.toml via Option<T>.unwrap_or(config.field)
+- [04-02] Ask conflict strategy falls back to Skip when stdin is not a TTY
+- [04-02] find_unique_name uses sequential numbering (file_1.txt) up to 9999, then timestamp fallback
+- [04-02] Dry-run shares full validation pipeline, only skips actual I/O
+- [04-02] Retry uses exponential backoff (delay * 2^attempt) via thread::sleep
+- [04-02] Used std::io::IsTerminal instead of atty crate for TTY detection
 
 ### Pending Todos
 
@@ -106,8 +113,8 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-02-17
-Stopped at: Completed 04-01-PLAN.md (Path alias system, 173 unit + 56 integration tests passing)
-Resume file: .planning/phases/04-user-experience/04-01-SUMMARY.md
+Stopped at: Completed 04-02-PLAN.md (Config and conflict handling, 188 unit + 48 integration tests passing)
+Resume file: .planning/phases/04-user-experience/04-02-SUMMARY.md
 
 ---
 *State initialized: 2026-02-16*
