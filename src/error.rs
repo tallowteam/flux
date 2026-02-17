@@ -52,6 +52,9 @@ pub enum FluxError {
         host: String,
         reason: String,
     },
+
+    #[error("Alias error: {0}")]
+    AliasError(String),
 }
 
 impl FluxError {
@@ -87,6 +90,9 @@ impl FluxError {
             }
             FluxError::ConnectionFailed { .. } => {
                 Some("Check that the host is reachable and the port is correct.")
+            }
+            FluxError::AliasError(_) => {
+                Some("Check alias name with `flux alias`.")
             }
             _ => None,
         }
@@ -126,6 +132,12 @@ impl From<walkdir::Error> for FluxError {
 impl From<serde_json::Error> for FluxError {
     fn from(err: serde_json::Error) -> Self {
         FluxError::Config(err.to_string())
+    }
+}
+
+impl From<toml::ser::Error> for FluxError {
+    fn from(err: toml::ser::Error) -> Self {
+        FluxError::Config(format!("TOML serialization error: {}", err))
     }
 }
 
