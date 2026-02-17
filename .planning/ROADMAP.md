@@ -83,12 +83,13 @@ Plans:
   3. User can pause/resume/cancel individual transfers in queue
   4. User can configure conflict handling (overwrite/skip/rename/ask) in config or flags
   5. User can preview operations with `--dry-run` before executing
-**Plans**: TBD
+**Plans**: 4 plans
 
 Plans:
-- [ ] 04-01: TBD
-- [ ] 04-02: TBD
-- [ ] 04-03: TBD
+- [ ] 04-01-PLAN.md — Path alias system: config dirs, AliasStore, alias CLI, alias resolution in transfers
+- [ ] 04-02-PLAN.md — Configuration & conflict handling: FluxConfig, ConflictStrategy, FailureStrategy, dry-run
+- [ ] 04-03-PLAN.md — Transfer queue: QueueStore, queue CLI (add/list/pause/resume/cancel/run)
+- [ ] 04-04-PLAN.md — History, shell completions, and integration tests
 
 ### Phase 5: Discovery & Security
 **Goal**: User can discover LAN devices and transfer securely with encryption
@@ -147,7 +148,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7
 | 1. Foundation | 0/3 | Planned | - |
 | 2. Performance | 0/3 | Planned | - |
 | 3. Network Protocols | 0/TBD | Not started | - |
-| 4. User Experience | 0/TBD | Not started | - |
+| 4. User Experience | 0/4 | Planned | - |
 | 5. Discovery & Security | 0/TBD | Not started | - |
 | 6. TUI Mode | 0/TBD | Not started | - |
 | 7. Sync Mode | 0/TBD | Not started | - |
