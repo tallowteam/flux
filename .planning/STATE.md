@@ -12,16 +12,16 @@ See: .planning/PROJECT.md (updated 2026-02-16)
 Phase: 3 of 7 (Network Protocols)
 Plan: 4 of 4 in current phase
 Status: In Progress
-Last activity: 2026-02-17 -- Completed 03-03-PLAN.md (SMB backend)
+Last activity: 2026-02-17 -- Completed 03-02-PLAN.md (SFTP backend)
 
-Progress: [########--] 40%
+Progress: [##########] 43%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 9
-- Average duration: 14min
-- Total execution time: 2.2 hours
+- Total plans completed: 10
+- Average duration: 15min
+- Total execution time: 2.6 hours
 
 **By Phase:**
 
@@ -29,11 +29,11 @@ Progress: [########--] 40%
 |-------|-------|-------|----------|
 | 01-foundation | 3/3 | 73min | 24min |
 | 02-performance | 3/3 | 22min | 7min |
-| 03-network-protocols | 3/4 | 31min | 10min |
+| 03-network-protocols | 4/4 | 55min | 14min |
 
 **Recent Trend:**
-- Last 5 plans: 02-02 (10min), 02-03 (7min), 03-01 (7min), 03-04 (12min), 03-03 (12min)
-- Trend: Stable at ~10min/plan for network protocol backends
+- Last 5 plans: 02-03 (7min), 03-01 (7min), 03-04 (12min), 03-03 (12min), 03-02 (24min)
+- Trend: SFTP took 24min due to Strawberry Perl installation for vendored-openssl build
 
 *Updated after each plan completion*
 
@@ -82,6 +82,11 @@ Recent decisions affecting current work:
 - [03-03] Windows SMB uses native UNC paths via std::fs -- no external dependencies (sambrs crate does not exist)
 - [03-03] Non-Windows SMB returns ProtocolError directing to smb feature flag or OS mount
 - [03-03] supports_parallel=false, supports_seek=false for SMB (network I/O not suitable for positional reads)
+- [03-02] Strawberry Perl required for vendored-openssl build on Windows (MSYS2 perl missing modules)
+- [03-02] unsafe Send+Sync impl for SftpBackend (ssh2 types need explicit markers for FluxBackend trait)
+- [03-02] SSH auth cascade: agent > key files (ed25519, rsa, ecdsa) > password > prompt
+- [03-02] get_current_username via env vars (USERNAME/USER) instead of whoami crate
+- [03-02] sftp_err converts ssh2::Error to FluxError::Io via Into<io::Error> trait
 
 ### Pending Todos
 
@@ -89,13 +94,13 @@ None yet.
 
 ### Blockers/Concerns
 
-- ssh2 crate cannot build on current system (missing Perl for vendored-openssl). SFTP plan (03-02) needs to resolve this.
+- [RESOLVED] ssh2 vendored-openssl build: Fixed by installing Strawberry Perl via winget. Builds require `PATH="/c/Strawberry/perl/bin:$PATH"` before cargo commands.
 
 ## Session Continuity
 
 Last session: 2026-02-17
-Stopped at: Completed 03-03-PLAN.md (SMB backend with Windows UNC path delegation, 188 tests)
-Resume file: .planning/phases/03-network-protocols/03-03-SUMMARY.md
+Stopped at: Completed 03-02-PLAN.md (SFTP backend with ssh2, 201 tests passing, Phase 3 all 4 plans done)
+Resume file: .planning/phases/03-network-protocols/03-02-SUMMARY.md
 
 ---
 *State initialized: 2026-02-16*
