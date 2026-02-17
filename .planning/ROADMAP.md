@@ -118,11 +118,13 @@ Plans:
   3. User can browse local and remote files using keyboard navigation
   4. User can manage queue (pause/resume/cancel) from TUI
   5. User can switch between active transfers view and history view
-**Plans**: TBD
+**Plans**: 4 plans
 
 Plans:
-- [ ] 06-01: TBD
-- [ ] 06-02: TBD
+- [ ] 06-01-PLAN.md — TUI foundation: dependencies, event loop, Component trait, App shell with tab switching, CLI entry points (flux ui, --tui, sync skeleton)
+- [ ] 06-02-PLAN.md — Dashboard component: active transfers table, speed sparkline, progress gauges
+- [ ] 06-03-PLAN.md — File browser component: directory listing via LocalBackend, keyboard navigation
+- [ ] 06-04-PLAN.md — Queue view + history view: queue management (pause/resume/cancel), transfer history table
 
 ### Phase 7: Sync Mode
 **Goal**: User can keep directories synchronized with one-way mirroring
