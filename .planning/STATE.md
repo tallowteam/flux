@@ -10,18 +10,18 @@ See: .planning/PROJECT.md (updated 2026-02-16)
 ## Current Position
 
 Phase: 6 of 7 (TUI Mode)
-Plan: 1 of 4 in current phase
-Status: In Progress
-Last activity: 2026-02-17 -- Completed 06-01-PLAN.md (TUI Foundation with ratatui)
+Plan: 4 of 4 in current phase
+Status: Phase Complete
+Last activity: 2026-02-17 -- Completed 06-04-PLAN.md (Queue View + History View)
 
-Progress: [##########################] 81%
+Progress: [##############################] 95%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 18
-- Average duration: 14min
-- Total execution time: 4.2 hours
+- Total plans completed: 21
+- Average duration: 13min
+- Total execution time: 4.5 hours
 
 **By Phase:**
 
@@ -32,11 +32,11 @@ Progress: [##########################] 81%
 | 03-network-protocols | 4/4 | 55min | 14min |
 | 04-user-experience | 4/4 | 21min | 5min |
 | 05-discovery-security | 3/3 | 61min | 20min |
-| 06-tui-mode | 1/4 | 9min | 9min |
+| 06-tui-mode | 4/4 | 25min | 6min |
 
 **Recent Trend:**
-- Last 5 plans: 04-04 (5min), 05-01 (25min), 05-02 (29min), 05-03 (7min), 06-01 (9min)
-- Trend: Phase 6 Plan 01 moderate (9min) -- new ratatui dep compilation + full TUI module structure
+- Last 5 plans: 05-03 (7min), 06-01 (9min), 06-02 (4min), 06-03 (5min), 06-04 (7min)
+- Trend: Phase 6 Plans 02-04 fast (4-7min each) -- building on established Component trait pattern
 
 *Updated after each plan completion*
 
@@ -134,6 +134,15 @@ Recent decisions affecting current work:
 - [06-01] 20fps render (50ms) and 4Hz tick (250ms) for responsive UI without CPU waste
 - [06-01] Component trait with handle_key_event/update/render matching ratatui community patterns
 - [06-01] ActiveTab enum with const ALL array for cycling with wrap-around
+- [06-02] SpeedHistory ring buffer with VecDeque for O(1) sparkline data management
+- [06-02] TransferInfo view model decouples rendering from QueueEntry storage format
+- [06-02] Clone table_state for render to maintain Component::render(&self) signature
+- [06-03] FileBrowser uses LocalBackend::list_dir() -- enables future remote browsing via trait
+- [06-03] canonicalize() for clean path display and reliable parent detection
+- [06-04] QueueStore loaded fresh per action for disk consistency with CLI
+- [06-04] Status message TTL pattern (12 ticks success, 20 ticks error)
+- [06-04] with_data_dir test constructor pattern avoids env var races in parallel tests
+- [06-04] Tab-specific status bar hints recreated in render() per active tab
 
 ### Pending Todos
 
@@ -146,8 +155,8 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-02-17
-Stopped at: Completed 06-01-PLAN.md (TUI Foundation -- ratatui 0.30, async event loop, Component architecture, 4-tab navigation, 360 tests passing)
-Resume file: .planning/phases/06-tui-mode/06-01-SUMMARY.md
+Stopped at: Completed 06-02, 06-03, 06-04 PLAN.md (Phase 6 complete -- Dashboard, FileBrowser, QueueView, HistoryView all functional)
+Resume file: .planning/phases/06-tui-mode/06-04-SUMMARY.md
 
 ---
 *State initialized: 2026-02-16*
