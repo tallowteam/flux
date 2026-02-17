@@ -12,16 +12,16 @@ See: .planning/PROJECT.md (updated 2026-02-16)
 Phase: 3 of 7 (Network Protocols)
 Plan: 4 of 4 in current phase
 Status: In Progress
-Last activity: 2026-02-16 -- Completed 03-04-PLAN.md (WebDAV backend)
+Last activity: 2026-02-17 -- Completed 03-03-PLAN.md (SMB backend)
 
 Progress: [########--] 40%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 8
-- Average duration: 15min
-- Total execution time: 2.0 hours
+- Total plans completed: 9
+- Average duration: 14min
+- Total execution time: 2.2 hours
 
 **By Phase:**
 
@@ -29,11 +29,11 @@ Progress: [########--] 40%
 |-------|-------|-------|----------|
 | 01-foundation | 3/3 | 73min | 24min |
 | 02-performance | 3/3 | 22min | 7min |
-| 03-network-protocols | 2/4 | 19min | 10min |
+| 03-network-protocols | 3/4 | 31min | 10min |
 
 **Recent Trend:**
-- Last 5 plans: 02-01 (5min), 02-02 (10min), 02-03 (7min), 03-01 (7min), 03-04 (12min)
-- Trend: Slight increase for network protocol complexity
+- Last 5 plans: 02-02 (10min), 02-03 (7min), 03-01 (7min), 03-04 (12min), 03-03 (12min)
+- Trend: Stable at ~10min/plan for network protocol backends
 
 *Updated after each plan completion*
 
@@ -79,6 +79,9 @@ Recent decisions affecting current work:
 - [03-04] WebDavWriter buffers writes to Vec<u8>, uploads via PUT on flush/drop
 - [03-04] PROPFIND XML parsing uses string matching instead of full XML parser
 - [03-04] Updated protocol_detection tests to accept any error since backends are now live
+- [03-03] Windows SMB uses native UNC paths via std::fs -- no external dependencies (sambrs crate does not exist)
+- [03-03] Non-Windows SMB returns ProtocolError directing to smb feature flag or OS mount
+- [03-03] supports_parallel=false, supports_seek=false for SMB (network I/O not suitable for positional reads)
 
 ### Pending Todos
 
@@ -90,9 +93,9 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-02-16
-Stopped at: Completed 03-04-PLAN.md (WebDAV backend with reqwest::blocking, 190 tests)
-Resume file: .planning/phases/03-network-protocols/03-04-SUMMARY.md
+Last session: 2026-02-17
+Stopped at: Completed 03-03-PLAN.md (SMB backend with Windows UNC path delegation, 188 tests)
+Resume file: .planning/phases/03-network-protocols/03-03-SUMMARY.md
 
 ---
 *State initialized: 2026-02-16*
