@@ -101,11 +101,12 @@ Plans:
   3. User can receive transfers with `flux receive` (listens for incoming)
   4. User can enable encryption with `--encrypt` for sensitive transfers
   5. Trust-on-first-use authentication works (device remembered after first connection)
-**Plans**: TBD
+**Plans**: 3 plans
 
 Plans:
-- [ ] 05-01: TBD
-- [ ] 05-02: TBD
+- [ ] 05-01-PLAN.md — Dependencies, error variants, security module (crypto, trust store, device identity)
+- [ ] 05-02-PLAN.md — Discovery module (mDNS registration/browsing) and transfer protocol message types
+- [ ] 05-03-PLAN.md — Net sender/receiver, CLI commands (discover, send, receive, trust), integration tests
 
 ### Phase 6: TUI Mode
 **Goal**: User can interactively browse, select, and monitor transfers in a visual dashboard
@@ -149,7 +150,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7
 | 2. Performance | 0/3 | Planned | - |
 | 3. Network Protocols | 0/TBD | Not started | - |
 | 4. User Experience | 0/4 | Planned | - |
-| 5. Discovery & Security | 0/TBD | Not started | - |
+| 5. Discovery & Security | 0/3 | Planned | - |
 | 6. TUI Mode | 0/TBD | Not started | - |
 | 7. Sync Mode | 0/TBD | Not started | - |
 
