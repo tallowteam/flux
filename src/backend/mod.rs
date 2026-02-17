@@ -1,5 +1,5 @@
 pub mod local;
-// pub mod sftp;  // Temporarily disabled: ssh2 cannot build (missing Perl/OpenSSL)
+pub mod sftp;
 pub mod smb;
 pub mod webdav;
 
@@ -35,11 +35,8 @@ pub struct BackendFeatures {
 
 /// Core abstraction for all file backends.
 ///
-/// Phase 1 implements LocalBackend only.
-/// Future phases add SftpBackend, SmbBackend, WebDavBackend.
-///
 /// Synchronous trait -- local file I/O is inherently blocking.
-/// Will evolve to async with `#[async_trait]` when network backends arrive (Phase 3).
+/// Network backends (SFTP, SMB, WebDAV) also use synchronous APIs.
 pub trait FluxBackend: Send + Sync {
     /// Get file/directory metadata.
     fn stat(&self, path: &Path) -> Result<FileStat, crate::error::FluxError>;
@@ -67,10 +64,12 @@ pub trait FluxBackend: Send + Sync {
 pub fn create_backend(protocol: &Protocol) -> Result<Box<dyn FluxBackend>, FluxError> {
     match protocol {
         Protocol::Local { .. } => Ok(Box::new(local::LocalBackend::new())),
-        // SFTP temporarily disabled: ssh2 cannot build (missing Perl/OpenSSL)
-        Protocol::Sftp { .. } => Err(FluxError::ProtocolError(
-            "SFTP backend not available: ssh2 dependency cannot build on this system".to_string(),
-        )),
+        Protocol::Sftp {
+            user, host, port, path,
+        } => {
+            let backend = sftp::SftpBackend::connect(user, host, *port, path, None)?;
+            Ok(Box::new(backend))
+        }
         Protocol::Smb {
             server, share, ..
         } => {
