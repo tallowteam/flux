@@ -6,6 +6,7 @@ mod cli;
 mod config;
 mod discovery;
 mod error;
+mod net;
 mod progress;
 mod protocol;
 mod queue;
