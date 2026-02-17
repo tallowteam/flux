@@ -55,6 +55,9 @@ pub enum FluxError {
 
     #[error("Alias error: {0}")]
     AliasError(String),
+
+    #[error("Queue error: {0}")]
+    QueueError(String),
 }
 
 impl FluxError {
@@ -93,6 +96,9 @@ impl FluxError {
             }
             FluxError::AliasError(_) => {
                 Some("Check alias name with `flux alias`.")
+            }
+            FluxError::QueueError(_) => {
+                Some("Check queue status with `flux queue`.")
             }
             _ => None,
         }

@@ -7,6 +7,7 @@ mod config;
 mod error;
 mod progress;
 mod protocol;
+mod queue;
 mod transfer;
 
 use cli::args::{Cli, Commands};
