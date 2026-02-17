@@ -135,11 +135,11 @@ Plans:
   2. User can preview sync changes with `flux sync --dry-run`
   3. User can schedule recurring syncs with cron-like syntax
   4. User can enable watch mode for continuous sync (`flux sync --watch`)
-**Plans**: TBD
+**Plans**: 2 plans
 
 Plans:
-- [ ] 07-01: TBD
-- [ ] 07-02: TBD
+- [ ] 07-01-PLAN.md — SyncEngine core: diff-then-execute architecture, SyncAction/SyncPlan types, mtime+size comparison, dry-run preview, --delete orphan removal, integration tests
+- [ ] 07-02-PLAN.md — Watch mode (notify-debouncer-full) and schedule mode (cron + tokio), integration tests
 
 ## Progress
 
@@ -154,7 +154,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7
 | 4. User Experience | 0/4 | Planned | - |
 | 5. Discovery & Security | 0/3 | Planned | - |
 | 6. TUI Mode | 0/TBD | Not started | - |
-| 7. Sync Mode | 0/TBD | Not started | - |
+| 7. Sync Mode | 0/2 | Planned | - |
 
 ---
 *Roadmap created: 2026-02-16*
