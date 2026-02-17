@@ -9,19 +9,19 @@ See: .planning/PROJECT.md (updated 2026-02-16)
 
 ## Current Position
 
-Phase: 4 of 7 (User Experience)
-Plan: 3 of 4 in current phase
-Status: In Progress
-Last activity: 2026-02-17 -- Completed 04-03-PLAN.md (Transfer queue system)
+Phase: 4 of 7 (User Experience) -- PHASE COMPLETE
+Plan: 4 of 4 in current phase
+Status: Phase Complete
+Last activity: 2026-02-17 -- Completed 04-04-PLAN.md (History, completions, integration tests)
 
-Progress: [#############] 56%
+Progress: [################] 60%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 13
+- Total plans completed: 14
 - Average duration: 13min
-- Total execution time: 2.9 hours
+- Total execution time: 3.0 hours
 
 **By Phase:**
 
@@ -30,11 +30,11 @@ Progress: [#############] 56%
 | 01-foundation | 3/3 | 73min | 24min |
 | 02-performance | 3/3 | 22min | 7min |
 | 03-network-protocols | 4/4 | 55min | 14min |
-| 04-user-experience | 3/4 | 16min | 5min |
+| 04-user-experience | 4/4 | 21min | 5min |
 
 **Recent Trend:**
-- Last 5 plans: 03-03 (12min), 03-02 (24min), 04-01 (6min), 04-02 (6min), 04-03 (4min)
-- Trend: Queue plan fastest yet at 4min (clean patterns established by alias/config plans)
+- Last 5 plans: 03-02 (24min), 04-01 (6min), 04-02 (6min), 04-03 (4min), 04-04 (5min)
+- Trend: Phase 4 plans consistently fast at 4-6min (established patterns, JSON-backed stores)
 
 *Updated after each plan completion*
 
@@ -106,6 +106,12 @@ Recent decisions affecting current work:
 - [04-03] State transitions idempotent where safe (pause already-paused is OK)
 - [04-03] Queue run builds CpArgs from entry fields, delegates to existing execute_copy
 - [04-03] flux queue with no subcommand defaults to list (matches alias pattern)
+- [04-04] History recording is best-effort: errors silently ignored so transfer success unaffected
+- [04-04] FLUX_CONFIG_DIR/FLUX_DATA_DIR env vars override default dirs for test isolation
+- [04-04] History cap removes oldest entries when limit exceeded (FIFO), default 1000
+- [04-04] Corrupted history.json silently starts fresh (matches QueueStore/AliasStore pattern)
+- [04-04] Shell completions use clap_complete::generate() writing to stdout
+- [04-04] format_bytes uses bytesize crate for human-readable size display
 
 ### Pending Todos
 
@@ -118,8 +124,8 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-02-17
-Stopped at: Completed 04-03-PLAN.md (Transfer queue, 204 unit + 48 integration tests passing)
-Resume file: .planning/phases/04-user-experience/04-03-SUMMARY.md
+Stopped at: Completed 04-04-PLAN.md (History, completions, Phase 4 integration tests -- Phase 4 COMPLETE, 218 unit + 60 integration = 278 tests passing)
+Resume file: .planning/phases/04-user-experience/04-04-SUMMARY.md
 
 ---
 *State initialized: 2026-02-16*
