@@ -1,4 +1,7 @@
 pub mod local;
+// pub mod sftp;  // Temporarily disabled: ssh2 cannot build on this machine (missing Perl/OpenSSL)
+pub mod smb;
+pub mod webdav;
 
 use std::path::Path;
 
@@ -59,19 +62,24 @@ pub trait FluxBackend: Send + Sync {
 
 /// Create the appropriate backend for a detected protocol.
 ///
-/// Returns `LocalBackend` for local paths. Network backends (SFTP, SMB, WebDAV)
-/// return stub errors until Plans 02-04 implement them.
+/// Returns `LocalBackend` for local paths, `SftpBackend` for SFTP,
+/// `SmbBackend` for SMB, and `WebDavBackend` for WebDAV.
 pub fn create_backend(protocol: &Protocol) -> Result<Box<dyn FluxBackend>, FluxError> {
     match protocol {
         Protocol::Local { .. } => Ok(Box::new(local::LocalBackend::new())),
+        // SFTP temporarily disabled: ssh2 cannot build on this machine (missing Perl/OpenSSL)
         Protocol::Sftp { .. } => Err(FluxError::ProtocolError(
-            "SFTP backend not yet implemented".to_string(),
+            "SFTP backend not available: ssh2 dependency cannot build on this system".to_string(),
         )),
-        Protocol::Smb { .. } => Err(FluxError::ProtocolError(
-            "SMB backend not yet implemented".to_string(),
-        )),
-        Protocol::WebDav { .. } => Err(FluxError::ProtocolError(
-            "WebDAV backend not yet implemented".to_string(),
-        )),
+        Protocol::Smb {
+            server, share, ..
+        } => {
+            let backend = smb::SmbBackend::connect(server, share)?;
+            Ok(Box::new(backend))
+        }
+        Protocol::WebDav { url, auth } => {
+            let backend = webdav::WebDavBackend::new(url, auth.clone())?;
+            Ok(Box::new(backend))
+        }
     }
 }
