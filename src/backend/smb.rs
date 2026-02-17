@@ -306,6 +306,70 @@ mod tests {
             let result = backend.stat(Path::new("no-such-file.txt"));
             assert!(result.is_err());
         }
+
+        #[test]
+        fn resolve_forward_slash_path_works() {
+            // Paths from smb:// URL parsing may use forward slashes
+            let backend = SmbBackend::connect("server", "share").unwrap();
+            let resolved = backend.resolve(Path::new("docs/readme.txt"));
+            // On Windows, PathBuf.join normalizes forward slashes to backslashes
+            let resolved_str = resolved.to_string_lossy();
+            assert!(
+                resolved_str.starts_with("\\\\server\\share"),
+                "Should start with UNC base, got: {}",
+                resolved_str
+            );
+            assert!(
+                resolved_str.contains("readme.txt"),
+                "Should contain filename, got: {}",
+                resolved_str
+            );
+        }
+
+        #[test]
+        fn resolve_single_file_name() {
+            let backend = SmbBackend::connect("fileserver", "data").unwrap();
+            let resolved = backend.resolve(Path::new("report.xlsx"));
+            assert_eq!(
+                resolved,
+                PathBuf::from("\\\\fileserver\\data\\report.xlsx")
+            );
+        }
+
+        #[test]
+        fn connect_with_ip_address() {
+            let backend = SmbBackend::connect("192.168.1.100", "share$").unwrap();
+            assert_eq!(
+                backend.base_unc,
+                PathBuf::from("\\\\192.168.1.100\\share$")
+            );
+        }
+
+        /// Verify that create_backend routes Protocol::Smb to SmbBackend.
+        #[test]
+        fn create_backend_routes_smb_protocol() {
+            use crate::backend::create_backend;
+            use crate::protocol::Protocol;
+
+            let protocol = Protocol::Smb {
+                server: "testserver".to_string(),
+                share: "testshare".to_string(),
+                path: "file.txt".to_string(),
+            };
+
+            let result = create_backend(&protocol);
+            assert!(
+                result.is_ok(),
+                "create_backend should succeed for Smb protocol, got: {:?}",
+                result.err()
+            );
+
+            let backend = result.unwrap();
+            let features = backend.features();
+            assert!(!features.supports_parallel);
+            assert!(!features.supports_seek);
+            assert!(!features.supports_permissions);
+        }
     }
 
     #[cfg(not(windows))]

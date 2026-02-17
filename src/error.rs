@@ -45,6 +45,13 @@ pub enum FluxError {
 
     #[error("Protocol error: {0}")]
     ProtocolError(String),
+
+    #[error("Connection failed to {protocol}://{host}: {reason}")]
+    ConnectionFailed {
+        protocol: String,
+        host: String,
+        reason: String,
+    },
 }
 
 impl FluxError {
@@ -77,6 +84,9 @@ impl FluxError {
             }
             FluxError::ProtocolError(_) => {
                 Some("Check the URL format. Examples: sftp://user@host/path, \\\\server\\share, https://server/webdav/")
+            }
+            FluxError::ConnectionFailed { .. } => {
+                Some("Check that the host is reachable and the port is correct.")
             }
             _ => None,
         }

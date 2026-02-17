@@ -1,5 +1,5 @@
 pub mod local;
-// pub mod sftp;  // Temporarily disabled: ssh2 cannot build on this machine (missing Perl/OpenSSL)
+// pub mod sftp;  // Temporarily disabled: ssh2 cannot build (missing Perl/OpenSSL)
 pub mod smb;
 pub mod webdav;
 
@@ -67,7 +67,7 @@ pub trait FluxBackend: Send + Sync {
 pub fn create_backend(protocol: &Protocol) -> Result<Box<dyn FluxBackend>, FluxError> {
     match protocol {
         Protocol::Local { .. } => Ok(Box::new(local::LocalBackend::new())),
-        // SFTP temporarily disabled: ssh2 cannot build on this machine (missing Perl/OpenSSL)
+        // SFTP temporarily disabled: ssh2 cannot build (missing Perl/OpenSSL)
         Protocol::Sftp { .. } => Err(FluxError::ProtocolError(
             "SFTP backend not available: ssh2 dependency cannot build on this system".to_string(),
         )),
