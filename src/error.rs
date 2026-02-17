@@ -58,6 +58,18 @@ pub enum FluxError {
 
     #[error("Queue error: {0}")]
     QueueError(String),
+
+    #[error("Discovery error: {0}")]
+    DiscoveryError(String),
+
+    #[error("Encryption error: {0}")]
+    EncryptionError(String),
+
+    #[error("Trust error: {0}")]
+    TrustError(String),
+
+    #[error("Transfer error: {0}")]
+    TransferError(String),
 }
 
 impl FluxError {
@@ -99,6 +111,18 @@ impl FluxError {
             }
             FluxError::QueueError(_) => {
                 Some("Check queue status with `flux queue`.")
+            }
+            FluxError::DiscoveryError(_) => {
+                Some("Check that your firewall allows mDNS (UDP port 5353) and no other Flux instance is running.")
+            }
+            FluxError::EncryptionError(_) => {
+                Some("The encryption handshake failed. Ensure both devices are using compatible Flux versions.")
+            }
+            FluxError::TrustError(_) => {
+                Some("Check trusted devices with `flux trust list`. Use `flux trust rm <device>` to remove stale entries.")
+            }
+            FluxError::TransferError(_) => {
+                Some("Check that the receiver is running (`flux receive`) and reachable on the network.")
             }
             _ => None,
         }
