@@ -10,18 +10,18 @@ See: .planning/PROJECT.md (updated 2026-02-16)
 ## Current Position
 
 Phase: 3 of 7 (Network Protocols)
-Plan: 1 of 4 in current phase
+Plan: 4 of 4 in current phase
 Status: In Progress
-Last activity: 2026-02-16 -- Completed 03-01-PLAN.md
+Last activity: 2026-02-16 -- Completed 03-04-PLAN.md (WebDAV backend)
 
-Progress: [#######---] 33%
+Progress: [########--] 40%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 7
-- Average duration: 16min
-- Total execution time: 1.8 hours
+- Total plans completed: 8
+- Average duration: 15min
+- Total execution time: 2.0 hours
 
 **By Phase:**
 
@@ -29,11 +29,11 @@ Progress: [#######---] 33%
 |-------|-------|-------|----------|
 | 01-foundation | 3/3 | 73min | 24min |
 | 02-performance | 3/3 | 22min | 7min |
-| 03-network-protocols | 1/4 | 7min | 7min |
+| 03-network-protocols | 2/4 | 19min | 10min |
 
 **Recent Trend:**
-- Last 5 plans: 01-03 (7min), 02-01 (5min), 02-02 (10min), 02-03 (7min), 03-01 (7min)
-- Trend: Stable at ~7min/plan for established codebase
+- Last 5 plans: 02-01 (5min), 02-02 (10min), 02-03 (7min), 03-01 (7min), 03-04 (12min)
+- Trend: Slight increase for network protocol complexity
 
 *Updated after each plan completion*
 
@@ -75,6 +75,10 @@ Recent decisions affecting current work:
 - [03-01] Windows drive letters (C:) detected as local paths despite URL parser treating them as schemes
 - [03-01] Network backends return ProtocolError stubs until Plans 02-04 implement them
 - [03-01] Auth enum includes Password, KeyFile, Agent variants as skeleton for Phase 5
+- [03-04] Used reqwest::blocking directly instead of async reqwest_dav -- avoids tokio runtime bridging entirely
+- [03-04] WebDavWriter buffers writes to Vec<u8>, uploads via PUT on flush/drop
+- [03-04] PROPFIND XML parsing uses string matching instead of full XML parser
+- [03-04] Updated protocol_detection tests to accept any error since backends are now live
 
 ### Pending Todos
 
@@ -82,13 +86,13 @@ None yet.
 
 ### Blockers/Concerns
 
-None yet.
+- ssh2 crate cannot build on current system (missing Perl for vendored-openssl). SFTP plan (03-02) needs to resolve this.
 
 ## Session Continuity
 
 Last session: 2026-02-16
-Stopped at: Completed 03-01-PLAN.md (protocol detection, backend factory, PathBuf->String migration -- 151 tests)
-Resume file: .planning/phases/03-network-protocols/03-01-SUMMARY.md
+Stopped at: Completed 03-04-PLAN.md (WebDAV backend with reqwest::blocking, 190 tests)
+Resume file: .planning/phases/03-network-protocols/03-04-SUMMARY.md
 
 ---
 *State initialized: 2026-02-16*
