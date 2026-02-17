@@ -1,5 +1,7 @@
 pub mod engine;
 pub mod plan;
+pub mod schedule;
+pub mod watch;
 
 use std::path::Path;
 
@@ -14,7 +16,8 @@ use self::engine::{compute_sync_plan, execute_sync_plan};
 /// Entry point for the `flux sync` command.
 ///
 /// Validates inputs, builds filter, computes sync plan, and either
-/// prints it (dry-run) or executes it.
+/// prints it (dry-run) or executes it. Dispatches to watch mode or
+/// schedule mode if the corresponding flags are set.
 pub fn execute_sync(args: SyncArgs, quiet: bool) -> Result<(), FluxError> {
     let source = Path::new(&args.source);
     let dest = Path::new(&args.dest);
@@ -46,6 +49,33 @@ pub fn execute_sync(args: SyncArgs, quiet: bool) -> Result<(), FluxError> {
 
     // Build filter from --exclude/--include patterns
     let filter = TransferFilter::new(&args.exclude, &args.include)?;
+
+    // Dispatch to watch mode
+    if args.watch {
+        return watch::watch_and_sync(
+            source,
+            dest,
+            &filter,
+            args.delete,
+            quiet,
+            args.verify,
+            args.force,
+        );
+    }
+
+    // Dispatch to schedule mode
+    if let Some(ref cron_expr) = args.schedule {
+        return schedule::scheduled_sync(
+            cron_expr,
+            source,
+            dest,
+            &filter,
+            args.delete,
+            quiet,
+            args.verify,
+            args.force,
+        );
+    }
 
     // Compute the sync plan
     let plan = compute_sync_plan(source, dest, &filter, args.delete, args.force)?;
