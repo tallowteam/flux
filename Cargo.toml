@@ -68,6 +68,10 @@ notify = "8"
 notify-debouncer-full = "0.7"
 cron = "0.15"
 
+# Secure memory zeroing
+zeroize = { version = "1", features = ["derive"] }
+subtle = "2"
+
 # Error handling
 thiserror = "2"
 anyhow = "1"

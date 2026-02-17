@@ -123,11 +123,15 @@ pub fn encode_message(msg: &FluxMessage) -> Result<Vec<u8>, FluxError> {
 
 /// Decode a FluxMessage from bytes using bincode 2.x (serde mode).
 ///
-/// Uses `bincode::serde::decode_from_slice` with standard configuration.
-/// Returns the decoded message (discarding the bytes-read count).
+/// Uses `bincode::serde::decode_from_slice` with standard configuration
+/// and a byte limit matching MAX_FRAME_SIZE. This prevents a malicious peer
+/// from sending a crafted message that causes unbounded memory allocation
+/// during deserialization (e.g., a Vec with a claimed length of 2^64).
 pub fn decode_message(bytes: &[u8]) -> Result<FluxMessage, FluxError> {
+    let config = bincode::config::standard()
+        .with_limit::<{ 2 * 1024 * 1024 }>(); // MAX_FRAME_SIZE = 2 MB
     let (msg, _bytes_read): (FluxMessage, usize) =
-        bincode::serde::decode_from_slice(bytes, bincode::config::standard()).map_err(|e| {
+        bincode::serde::decode_from_slice(bytes, config).map_err(|e| {
             FluxError::TransferError(format!("Failed to decode message: {}", e))
         })?;
     Ok(msg)

@@ -29,6 +29,12 @@ pub fn flux_config_dir() -> Result<PathBuf, FluxError> {
     let flux_dir = base.join("flux");
     if !flux_dir.exists() {
         std::fs::create_dir_all(&flux_dir)?;
+        // Restrict config directory permissions on Unix (contains identity.json private key)
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&flux_dir, std::fs::Permissions::from_mode(0o700)).ok();
+        }
     }
     Ok(flux_dir)
 }

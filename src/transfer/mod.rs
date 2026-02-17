@@ -94,15 +94,15 @@ pub fn execute_copy(args: CpArgs, quiet: bool) -> Result<(), FluxError> {
     let source_str = config::aliases::resolve_alias(&args.source, &alias_store);
     let dest_str = config::aliases::resolve_alias(&args.dest, &alias_store);
 
-    tracing::debug!("Alias resolution: {} -> {}", args.source, source_str);
-    tracing::debug!("Alias resolution: {} -> {}", args.dest, dest_str);
+    tracing::debug!("Alias resolution: {} -> {}", args.source, strip_url_credentials(&source_str));
+    tracing::debug!("Alias resolution: {} -> {}", args.dest, strip_url_credentials(&dest_str));
 
     // Detect protocols from resolved source and destination strings
     let src_protocol = detect_protocol(&source_str);
     let dst_protocol = detect_protocol(&dest_str);
 
-    tracing::debug!("Source protocol: {} ({})", src_protocol.name(), source_str);
-    tracing::debug!("Dest protocol: {} ({})", dst_protocol.name(), dest_str);
+    tracing::debug!("Source protocol: {} ({})", src_protocol.name(), strip_url_credentials(&source_str));
+    tracing::debug!("Dest protocol: {} ({})", dst_protocol.name(), strip_url_credentials(&dest_str));
 
     // For non-local protocols, validate the backend is available (will error with stub message)
     if !src_protocol.is_local() {
@@ -530,6 +530,7 @@ fn dry_run_directory(
     let mut total_bytes = 0u64;
 
     for entry in WalkDir::new(&source_clean)
+        .follow_links(false)
         .into_iter()
         .filter_entry(|e| !filter.is_excluded_dir(e))
     {
@@ -652,6 +653,7 @@ fn copy_directory(
 
     // First pass: count files for progress bar total
     let file_count = WalkDir::new(&source_clean)
+        .follow_links(false)
         .into_iter()
         .filter_entry(|e| !filter.is_excluded_dir(e))
         .filter_map(|e| e.ok())
@@ -664,6 +666,7 @@ fn copy_directory(
 
     // Second pass: actual copy
     for entry in WalkDir::new(&source_clean)
+        .follow_links(false)
         .into_iter()
         .filter_entry(|e| !filter.is_excluded_dir(e))
     {
@@ -883,8 +886,8 @@ fn record_history(
         let flux_config = config::types::load_config().unwrap_or_default();
         if let Ok(mut history) = HistoryStore::load(&data_dir, flux_config.history_limit) {
             let entry = HistoryEntry {
-                source: source.to_string(),
-                dest: dest.to_string(),
+                source: strip_url_credentials(source),
+                dest: strip_url_credentials(dest),
                 bytes,
                 files,
                 duration_secs,
@@ -894,6 +897,22 @@ fn record_history(
             };
             let _ = history.append(entry); // Ignore history write errors
         }
+    }
+}
+
+/// Strip credentials (username:password@) from URLs before persisting to history.
+///
+/// Prevents passwords embedded in WebDAV/SFTP URLs from being stored in plaintext
+/// on disk. Non-URL strings are returned as-is.
+fn strip_url_credentials(s: &str) -> String {
+    if let Ok(mut parsed) = url::Url::parse(s) {
+        if !parsed.username().is_empty() || parsed.password().is_some() {
+            parsed.set_username("").ok();
+            parsed.set_password(None).ok();
+        }
+        parsed.to_string()
+    } else {
+        s.to_string()
     }
 }
 

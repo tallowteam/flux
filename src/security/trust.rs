@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use subtle::ConstantTimeEq;
 
 use crate::error::FluxError;
 
@@ -64,8 +65,15 @@ impl TrustStore {
                     store.path = path;
                     Ok(store)
                 }
-                Err(_) => {
-                    // Corrupted file: start fresh (graceful degradation)
+                Err(e) => {
+                    // Corrupted file: warn the user and start fresh.
+                    // This is logged as a warning because a corrupted trust store
+                    // means all previously trusted devices will need re-verification.
+                    tracing::warn!(
+                        "Trust store corrupted ({}), starting fresh. \
+                         Previously trusted devices will need re-verification.",
+                        e
+                    );
                     Ok(Self {
                         devices: BTreeMap::new(),
                         path,
@@ -104,11 +112,20 @@ impl TrustStore {
     /// - `Trusted` if the device name exists and the public key matches.
     /// - `Unknown` if the device name is not in the store.
     /// - `KeyChanged` if the device name exists but the public key differs.
+    ///
+    /// Public key comparison uses constant-time equality to prevent timing
+    /// side-channel leaks that could reveal information about stored keys.
     pub fn is_trusted(&self, device_name: &str, public_key_b64: &str) -> TrustStatus {
         match self.devices.get(device_name) {
             None => TrustStatus::Unknown,
             Some(device) => {
-                if device.public_key == public_key_b64 {
+                let stored = device.public_key.as_bytes();
+                let provided = public_key_b64.as_bytes();
+                // Constant-time comparison: check length equality first (not secret),
+                // then compare bytes in constant time to avoid timing leaks on key content.
+                if stored.len() == provided.len()
+                    && stored.ct_eq(provided).into()
+                {
                     TrustStatus::Trusted
                 } else {
                     TrustStatus::KeyChanged

@@ -85,8 +85,17 @@ pub async fn start_receiver(
         let enc = encrypt;
 
         tokio::spawn(async move {
-            if let Err(e) = handle_connection(stream, out, enc, cfg).await {
-                eprintln!("Transfer error from {}: {}", peer_addr, e);
+            // Per-connection timeout to prevent slowloris and stalled-connection attacks.
+            // The handshake must complete within 30 seconds; the entire transfer within 30 minutes.
+            let result = tokio::time::timeout(
+                std::time::Duration::from_secs(30 * 60),
+                handle_connection(stream, out, enc, cfg),
+            )
+            .await;
+            match result {
+                Ok(Err(e)) => eprintln!("Transfer error from {}: {}", peer_addr, e),
+                Err(_) => eprintln!("Connection from {} timed out", peer_addr),
+                Ok(Ok(())) => {}
             }
         });
     }
@@ -234,12 +243,30 @@ async fn handle_connection(
         let peer_public = x25519_dalek::PublicKey::from(peer_pub_bytes);
         Some(EncryptedChannel::complete(our_secret, &peer_public))
     } else {
-        // Not encrypting -- accept without key
+        // Not encrypting -- reject if sender expected encryption to prevent silent downgrade.
+        // A MITM could strip the sender's key, but we cannot detect that here.
+        // What we CAN prevent is the receiver silently accepting when the sender
+        // explicitly offered encryption.
         if peer_public_key.is_some() {
             eprintln!(
-                "Warning: {} offered encryption but this receiver is not in encrypt mode",
+                "Rejecting: {} offered encryption but this receiver is not in encrypt mode.",
                 peer_device_name
             );
+            eprintln!("Start the receiver with --encrypt to accept encrypted transfers.");
+            let reject = FluxMessage::HandshakeAck {
+                accepted: false,
+                public_key: None,
+                reason: Some(
+                    "Receiver is not in encrypt mode. Start with --encrypt to enable.".into(),
+                ),
+            };
+            framed
+                .send(Bytes::from(encode_message(&reject)?))
+                .await
+                .ok();
+            return Err(FluxError::EncryptionError(
+                "Sender offered encryption but receiver is not in encrypt mode".into(),
+            ));
         }
         let ack = FluxMessage::HandshakeAck {
             accepted: true,
@@ -261,13 +288,13 @@ async fn handle_connection(
         .map_err(|e| FluxError::TransferError(format!("Failed to read file header: {}", e)))?;
 
     let file_header = decode_message(&fh_bytes)?;
-    let (filename, file_size, _encrypted) = match file_header {
+    let (filename, file_size, _encrypted, expected_checksum) = match file_header {
         FluxMessage::FileHeader {
             filename,
             size,
             encrypted,
-            ..
-        } => (filename, size, encrypted),
+            checksum,
+        } => (filename, size, encrypted, checksum),
         FluxMessage::Error { message } => {
             return Err(FluxError::TransferError(format!(
                 "Sender error: {}",
@@ -281,7 +308,25 @@ async fn handle_connection(
         }
     };
 
-    // Create output file with auto-rename if it exists
+    // Validate file size to prevent memory exhaustion from malicious senders
+    if file_size > MAX_RECEIVE_SIZE {
+        let reject = FluxMessage::Error {
+            message: format!(
+                "File too large: {} bytes exceeds maximum {} bytes",
+                file_size, MAX_RECEIVE_SIZE
+            ),
+        };
+        framed
+            .send(Bytes::from(encode_message(&reject)?))
+            .await
+            .ok();
+        return Err(FluxError::TransferError(format!(
+            "Rejected file '{}': size {} exceeds maximum {}",
+            filename, file_size, MAX_RECEIVE_SIZE
+        )));
+    }
+
+    // Create output file with auto-rename if it exists (filename is sanitized inside)
     let output_path = find_unique_path(&output_dir, &filename);
     let display_name = output_path
         .file_name()
@@ -301,7 +346,11 @@ async fn handle_connection(
 
     // --- Receive DataChunks ---
     let mut received_bytes: u64 = 0;
-    let mut file_data = Vec::with_capacity(file_size as usize);
+    let mut expected_offset: u64 = 0;
+    // Cap pre-allocation to avoid panic on 32-bit systems or extreme file_size values.
+    // The Vec will grow as needed if file_size was under-reported.
+    let alloc_cap = usize::try_from(file_size).unwrap_or(usize::MAX).min(256 * 1024 * 1024);
+    let mut file_data = Vec::with_capacity(alloc_cap);
 
     while received_bytes < file_size {
         let chunk_bytes = framed
@@ -316,7 +365,16 @@ async fn handle_connection(
 
         let chunk = decode_message(&chunk_bytes)?;
         match chunk {
-            FluxMessage::DataChunk { data, nonce, .. } => {
+            FluxMessage::DataChunk { offset, data, nonce } => {
+                // Validate chunk offset matches expected sequential position
+                if offset != expected_offset {
+                    pb.finish_and_clear();
+                    return Err(FluxError::TransferError(format!(
+                        "Unexpected chunk offset: expected {}, got {}",
+                        expected_offset, offset
+                    )));
+                }
+
                 let plaintext = if let Some(ref ch) = channel {
                     let nonce_bytes: [u8; 24] = nonce
                         .ok_or_else(|| {
@@ -333,7 +391,19 @@ async fn handle_connection(
                     data
                 };
 
-                received_bytes += plaintext.len() as u64;
+                let chunk_len = plaintext.len() as u64;
+
+                // Prevent data overflow: reject if sender sends more than declared size
+                if received_bytes + chunk_len > file_size {
+                    pb.finish_and_clear();
+                    return Err(FluxError::TransferError(format!(
+                        "Data overflow: received {} + chunk {} exceeds declared size {}",
+                        received_bytes, chunk_len, file_size
+                    )));
+                }
+
+                received_bytes += chunk_len;
+                expected_offset += chunk_len;
                 file_data.extend_from_slice(&plaintext);
                 pb.set_position(received_bytes);
             }
@@ -355,6 +425,30 @@ async fn handle_connection(
 
     pb.finish_and_clear();
 
+    // --- Verify BLAKE3 checksum if provided ---
+    let checksum_verified = if let Some(ref expected) = expected_checksum {
+        let actual = blake3::hash(&file_data).to_hex().to_string();
+        if actual != *expected {
+            let reject = FluxMessage::Error {
+                message: format!(
+                    "Checksum mismatch: expected {}, got {}",
+                    expected, actual
+                ),
+            };
+            framed
+                .send(Bytes::from(encode_message(&reject)?))
+                .await
+                .ok();
+            return Err(FluxError::TransferError(format!(
+                "BLAKE3 checksum mismatch for '{}': file may be corrupted or tampered",
+                filename
+            )));
+        }
+        Some(true)
+    } else {
+        None
+    };
+
     // Write the received file
     std::fs::write(&output_path, &file_data).map_err(|e| {
         FluxError::TransferError(format!(
@@ -368,7 +462,7 @@ async fn handle_connection(
     let complete = FluxMessage::TransferComplete {
         filename: display_name.clone(),
         bytes_received: received_bytes,
-        checksum_verified: None,
+        checksum_verified,
     };
     framed
         .send(Bytes::from(encode_message(&complete)?))
@@ -385,21 +479,53 @@ async fn handle_connection(
     Ok(())
 }
 
+/// Sanitize a filename received from a remote peer.
+///
+/// Prevents path traversal attacks where a malicious sender could
+/// provide filenames like `../../etc/passwd` or `/etc/shadow`.
+///
+/// Rules:
+/// - Strip all directory components (only keep the final filename)
+/// - Remove leading dots (prevent hidden files on Unix)
+/// - Replace empty result with "unnamed"
+fn sanitize_filename(filename: &str) -> String {
+    // Extract just the filename component, stripping any path separators
+    let name = Path::new(filename)
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_default();
+
+    // Strip leading dots to prevent hidden files
+    let name = name.trim_start_matches('.');
+
+    if name.is_empty() {
+        "unnamed".to_string()
+    } else {
+        name.to_string()
+    }
+}
+
+/// Maximum file size the receiver will accept (4 GB).
+/// This prevents a malicious sender from claiming an enormous file size
+/// and causing the receiver to allocate unbounded memory.
+const MAX_RECEIVE_SIZE: u64 = 4 * 1024 * 1024 * 1024;
+
 /// Find a unique file path in the output directory.
 ///
 /// If `output_dir/filename` does not exist, return it as-is.
 /// Otherwise, try `filename_1.ext`, `filename_2.ext`, etc. up to 9999.
 fn find_unique_path(output_dir: &Path, filename: &str) -> PathBuf {
-    let base = output_dir.join(filename);
+    let safe_name = sanitize_filename(filename);
+    let base = output_dir.join(&safe_name);
     if !base.exists() {
         return base;
     }
 
-    let stem = Path::new(filename)
+    let stem = Path::new(&safe_name)
         .file_stem()
         .map(|s| s.to_string_lossy().to_string())
-        .unwrap_or_else(|| filename.to_string());
-    let ext = Path::new(filename)
+        .unwrap_or_else(|| safe_name.clone());
+    let ext = Path::new(&safe_name)
         .extension()
         .map(|e| format!(".{}", e.to_string_lossy()));
 

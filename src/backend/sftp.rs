@@ -91,7 +91,7 @@ impl SftpBackend {
 
         // Determine the effective username
         let effective_user = if user.is_empty() {
-            get_current_username()
+            get_current_username()?
         } else {
             user.to_string()
         };
@@ -357,10 +357,17 @@ fn sftp_err(e: ssh2::Error) -> FluxError {
 /// Get the current system username for SSH authentication fallback.
 ///
 /// Uses environment variables: USERNAME on Windows, USER on Unix.
-fn get_current_username() -> String {
+/// Returns an error if neither variable is set rather than defaulting
+/// to "root", which could cause unintended privileged access attempts.
+fn get_current_username() -> Result<String, FluxError> {
     std::env::var("USERNAME")
         .or_else(|_| std::env::var("USER"))
-        .unwrap_or_else(|_| "root".to_string())
+        .map_err(|_| FluxError::ConnectionFailed {
+            protocol: "sftp".to_string(),
+            host: String::new(),
+            reason: "Cannot determine username: neither USERNAME nor USER environment variable is set. \
+                     Specify the user in the URL (sftp://user@host/path).".to_string(),
+        })
 }
 
 /// Split a path into its components for recursive mkdir.

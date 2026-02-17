@@ -863,6 +863,7 @@ dependencies = [
  "serde",
  "serde_json",
  "ssh2",
+ "subtle",
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
@@ -873,6 +874,7 @@ dependencies = [
  "url",
  "walkdir",
  "x25519-dalek",
+ "zeroize",
  "zstd",
 ]
 

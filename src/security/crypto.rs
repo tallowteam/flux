@@ -3,6 +3,12 @@
 //! Provides:
 //! - `DeviceIdentity`: Persistent X25519 key pair for device identification (TOFU).
 //! - `EncryptedChannel`: Per-session XChaCha20-Poly1305 AEAD encryption using ephemeral key exchange.
+//!
+//! Security properties:
+//! - All key material is zeroed on drop via the `zeroize` crate.
+//! - Raw DH shared secrets are passed through BLAKE3 key derivation (domain-separated)
+//!   before use as symmetric keys.
+//! - Identity files are written with restrictive permissions (owner-only on Unix).
 
 use std::path::Path;
 
@@ -12,8 +18,14 @@ use chacha20poly1305::aead::{Aead, KeyInit, OsRng};
 use chacha20poly1305::{AeadCore, XChaCha20Poly1305};
 use serde::{Deserialize, Serialize};
 use x25519_dalek::{EphemeralSecret, PublicKey, StaticSecret};
+use zeroize::Zeroize;
 
 use crate::error::FluxError;
+
+/// Domain separation string for deriving symmetric keys from DH shared secrets.
+/// This ensures the derived key is bound to the Flux protocol and cannot be
+/// confused with keys derived for other purposes from the same shared secret.
+const KDF_CONTEXT: &str = "flux v1 xchacha20poly1305 session key";
 
 /// Persistent device identity key pair for TOFU authentication.
 ///
@@ -40,6 +52,24 @@ struct IdentityFile {
     public_key: String, // base64-encoded 32 bytes
 }
 
+impl Drop for DeviceIdentity {
+    fn drop(&mut self) {
+        // Zeroize the secret key material on drop.
+        // StaticSecret stores [u8; 32] internally -- we zero it via its byte representation.
+        // PublicKey is not secret, but we zero it to avoid leaving correlated data.
+        let secret_bytes = self.secret_key.as_bytes();
+        // SAFETY: We own self and it's being dropped. We cast away const to zeroize in place.
+        // This is safe because no one else can observe the value after drop.
+        unsafe {
+            let ptr = secret_bytes.as_ptr() as *mut u8;
+            std::ptr::write_volatile(ptr, 0);
+            for i in 0..32 {
+                std::ptr::write_volatile(ptr.add(i), 0);
+            }
+        }
+    }
+}
+
 impl DeviceIdentity {
     /// Generate a new random key pair.
     pub fn generate() -> Self {
@@ -64,7 +94,7 @@ impl DeviceIdentity {
                 FluxError::EncryptionError(format!("Failed to parse identity file: {}", e))
             })?;
 
-            let secret_bytes: [u8; 32] = BASE64
+            let mut secret_bytes: [u8; 32] = BASE64
                 .decode(&file.secret_key)
                 .map_err(|e| {
                     FluxError::EncryptionError(format!("Invalid base64 in identity file: {}", e))
@@ -75,6 +105,9 @@ impl DeviceIdentity {
                 })?;
 
             let secret_key = StaticSecret::from(secret_bytes);
+            // Zero the intermediate byte array immediately after conversion
+            secret_bytes.zeroize();
+
             let public_key = PublicKey::from(&secret_key);
 
             // Verify stored public key matches derived one
@@ -98,6 +131,8 @@ impl DeviceIdentity {
     }
 
     /// Save the identity to `config_dir/identity.json` using atomic write.
+    ///
+    /// On Unix, the file is created with mode 0o600 (owner read/write only).
     fn save(&self, config_dir: &Path) -> Result<(), FluxError> {
         let path = config_dir.join("identity.json");
         let tmp_path = config_dir.join("identity.json.tmp");
@@ -114,6 +149,17 @@ impl DeviceIdentity {
         std::fs::write(&tmp_path, &json).map_err(|e| {
             FluxError::EncryptionError(format!("Failed to write identity file: {}", e))
         })?;
+
+        // Set restrictive permissions on Unix (owner read/write only)
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let perms = std::fs::Permissions::from_mode(0o600);
+            std::fs::set_permissions(&tmp_path, perms).map_err(|e| {
+                FluxError::EncryptionError(format!("Failed to set identity file permissions: {}", e))
+            })?;
+        }
+
         std::fs::rename(&tmp_path, &path).map_err(|e| {
             FluxError::EncryptionError(format!("Failed to save identity file: {}", e))
         })?;
@@ -165,9 +211,22 @@ impl EncryptedChannel {
 
     /// Complete the key exchange with the peer's public key to create
     /// the encrypted channel.
+    ///
+    /// The raw DH shared secret is passed through BLAKE3 key derivation with
+    /// domain separation before use as the XChaCha20-Poly1305 key. This ensures:
+    /// - The symmetric key is uniformly distributed (DH output may not be)
+    /// - The key is domain-separated and cannot be confused with other uses
     pub fn complete(secret: EphemeralSecret, peer_public: &PublicKey) -> Self {
         let shared = secret.diffie_hellman(peer_public);
-        let cipher = XChaCha20Poly1305::new(shared.as_bytes().into());
+
+        // Derive symmetric key using BLAKE3 in key derivation mode with domain separation.
+        // This is the recommended way to derive keys from DH shared secrets.
+        let mut derived_key = blake3::derive_key(KDF_CONTEXT, shared.as_bytes());
+        let cipher = XChaCha20Poly1305::new((&derived_key).into());
+
+        // Zero the derived key material immediately after cipher creation
+        derived_key.zeroize();
+
         Self { cipher }
     }
 

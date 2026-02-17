@@ -136,18 +136,7 @@ pub async fn send_file(
         .map(|n| n.to_string_lossy().to_string())
         .unwrap_or_else(|| "unnamed".to_string());
 
-    let header = FluxMessage::FileHeader {
-        filename: filename.clone(),
-        size: file_size,
-        checksum: None,
-        encrypted: encrypt,
-    };
-    framed
-        .send(Bytes::from(encode_message(&header)?))
-        .await
-        .map_err(|e| FluxError::TransferError(format!("Failed to send file header: {}", e)))?;
-
-    // --- Stream file data ---
+    // --- Read file data and compute BLAKE3 checksum ---
     let file_data = std::fs::read(file_path).map_err(|e| {
         FluxError::TransferError(format!(
             "Failed to read file '{}': {}",
@@ -155,6 +144,19 @@ pub async fn send_file(
             e
         ))
     })?;
+
+    let checksum = blake3::hash(&file_data).to_hex().to_string();
+
+    let header = FluxMessage::FileHeader {
+        filename: filename.clone(),
+        size: file_size,
+        checksum: Some(checksum),
+        encrypted: encrypt,
+    };
+    framed
+        .send(Bytes::from(encode_message(&header)?))
+        .await
+        .map_err(|e| FluxError::TransferError(format!("Failed to send file header: {}", e)))?;
 
     let mut offset: u64 = 0;
     let total = file_data.len();
