@@ -10,9 +10,10 @@ mod protocol;
 mod queue;
 mod transfer;
 
-use cli::args::{Cli, Commands};
+use cli::args::{Cli, CpArgs, Commands, QueueAction};
 use config::types::Verbosity;
 use error::FluxError;
+use queue::state::QueueStatus;
 
 fn main() {
     let cli = Cli::parse();
@@ -94,6 +95,135 @@ fn run(cli: Cli) -> Result<(), FluxError> {
             }
             Ok(())
         }
+        Commands::Queue(args) => {
+            let data_dir = config::paths::flux_data_dir()?;
+            let mut store = queue::state::QueueStore::load(&data_dir)?;
+
+            match args.action.unwrap_or(QueueAction::List) {
+                QueueAction::Add(add_args) => {
+                    let id = store.add(
+                        add_args.source,
+                        add_args.dest,
+                        add_args.recursive,
+                        add_args.verify,
+                        add_args.compress,
+                    );
+                    store.save()?;
+                    eprintln!("Queued transfer #{}", id);
+                }
+                QueueAction::List => {
+                    let entries = store.list();
+                    if entries.is_empty() {
+                        eprintln!("Queue is empty");
+                    } else {
+                        println!(
+                            "{:<4} {:<10} {:<30} {:<30}",
+                            "ID", "STATUS", "SOURCE", "DEST"
+                        );
+                        println!("{}", "-".repeat(76));
+                        for entry in entries {
+                            let source = truncate_str(&entry.source, 28);
+                            let dest = truncate_str(&entry.dest, 28);
+                            println!(
+                                "{:<4} {:<10} {:<30} {:<30}",
+                                entry.id, entry.status, source, dest
+                            );
+                        }
+                    }
+                }
+                QueueAction::Pause(id_args) => {
+                    store.pause(id_args.id)?;
+                    store.save()?;
+                    eprintln!("Paused transfer #{}", id_args.id);
+                }
+                QueueAction::Resume(id_args) => {
+                    store.resume(id_args.id)?;
+                    store.save()?;
+                    eprintln!("Resumed transfer #{}", id_args.id);
+                }
+                QueueAction::Cancel(id_args) => {
+                    store.cancel(id_args.id)?;
+                    store.save()?;
+                    eprintln!("Cancelled transfer #{}", id_args.id);
+                }
+                QueueAction::Run => {
+                    let pending: Vec<u64> =
+                        store.pending_entries().iter().map(|e| e.id).collect();
+                    if pending.is_empty() {
+                        eprintln!("No pending transfers in queue");
+                        return Ok(());
+                    }
+                    eprintln!("Processing {} transfer(s)...", pending.len());
+
+                    for id in pending {
+                        // Mark as running
+                        if let Some(entry) = store.get_mut(id) {
+                            entry.status = QueueStatus::Running;
+                            entry.started_at = Some(chrono::Utc::now());
+                        }
+                        store.save()?;
+
+                        // Clone entry details for CpArgs construction
+                        let entry = store.get(id).unwrap().clone();
+
+                        eprintln!("\n[#{}] {} -> {}", id, entry.source, entry.dest);
+
+                        // Build CpArgs from queue entry
+                        let cp_args = CpArgs {
+                            source: entry.source.clone(),
+                            dest: entry.dest.clone(),
+                            recursive: entry.recursive,
+                            verify: entry.verify,
+                            compress: entry.compress,
+                            chunks: 0,
+                            exclude: vec![],
+                            include: vec![],
+                            limit: None,
+                            resume: false,
+                            on_conflict: None,
+                            on_error: None,
+                            dry_run: false,
+                        };
+
+                        match transfer::execute_copy(cp_args, cli.quiet) {
+                            Ok(()) => {
+                                if let Some(e) = store.get_mut(id) {
+                                    e.status = QueueStatus::Completed;
+                                    e.completed_at = Some(chrono::Utc::now());
+                                }
+                                store.save()?;
+                                eprintln!("[#{}] Completed", id);
+                            }
+                            Err(err) => {
+                                if let Some(e) = store.get_mut(id) {
+                                    e.status = QueueStatus::Failed;
+                                    e.completed_at = Some(chrono::Utc::now());
+                                    e.error = Some(format!("{}", err));
+                                }
+                                store.save()?;
+                                eprintln!("[#{}] Failed: {}", id, err);
+                            }
+                        }
+                    }
+                    eprintln!("\nQueue processing complete");
+                }
+                QueueAction::Clear => {
+                    store.clear_completed();
+                    store.save()?;
+                    eprintln!("Cleared completed/failed/cancelled entries");
+                }
+            }
+            Ok(())
+        }
+    }
+}
+
+/// Truncate a string to `max` chars, appending "..." if truncated.
+fn truncate_str(s: &str, max: usize) -> String {
+    if s.len() <= max {
+        s.to_string()
+    } else {
+        format!("{}...", &s[..max.saturating_sub(3)])
     }
 }
 

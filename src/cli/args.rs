@@ -27,6 +27,9 @@ pub enum Commands {
 
     /// Manage path aliases
     Alias(AliasArgs),
+
+    /// Manage transfer queue
+    Queue(QueueArgs),
 }
 
 #[derive(clap::Args, Debug)]
@@ -111,4 +114,55 @@ pub enum AliasAction {
 pub struct AliasRmArgs {
     /// Name of alias to remove
     pub name: String,
+}
+
+/// Arguments for the `flux queue` command.
+#[derive(clap::Args, Debug)]
+pub struct QueueArgs {
+    #[command(subcommand)]
+    pub action: Option<QueueAction>,
+}
+
+/// Subcommands for queue management.
+#[derive(Subcommand, Debug)]
+pub enum QueueAction {
+    /// Add a transfer to the queue
+    Add(QueueAddArgs),
+    /// List queued transfers
+    List,
+    /// Pause a queued transfer
+    Pause(QueueIdArgs),
+    /// Resume a paused transfer
+    Resume(QueueIdArgs),
+    /// Cancel a queued transfer
+    Cancel(QueueIdArgs),
+    /// Process all pending transfers in the queue
+    Run,
+    /// Clear completed/failed/cancelled entries
+    Clear,
+}
+
+/// Arguments for `flux queue add`.
+#[derive(clap::Args, Debug)]
+pub struct QueueAddArgs {
+    /// Source path or URI
+    pub source: String,
+    /// Destination path or URI
+    pub dest: String,
+    /// Copy directories recursively
+    #[arg(short, long)]
+    pub recursive: bool,
+    /// Verify transfer integrity
+    #[arg(long)]
+    pub verify: bool,
+    /// Enable compression
+    #[arg(long)]
+    pub compress: bool,
+}
+
+/// Arguments for queue commands that take a job ID.
+#[derive(clap::Args, Debug)]
+pub struct QueueIdArgs {
+    /// Transfer ID
+    pub id: u64,
 }
