@@ -5,23 +5,23 @@
 See: .planning/PROJECT.md (updated 2026-02-16)
 
 **Core value:** Transfer files at maximum network speed with zero friction
-**Current focus:** Phase 4 - User Experience
+**Current focus:** Phase 5 - Discovery & Security
 
 ## Current Position
 
-Phase: 4 of 7 (User Experience) -- PHASE COMPLETE
-Plan: 4 of 4 in current phase
-Status: Phase Complete
-Last activity: 2026-02-17 -- Completed 04-04-PLAN.md (History, completions, integration tests)
+Phase: 5 of 7 (Discovery & Security)
+Plan: 1 of 3 in current phase
+Status: In Progress
+Last activity: 2026-02-17 -- Completed 05-01-PLAN.md (Security module: crypto + trust store)
 
-Progress: [################] 60%
+Progress: [##################] 65%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 14
-- Average duration: 13min
-- Total execution time: 3.0 hours
+- Total plans completed: 15
+- Average duration: 14min
+- Total execution time: 3.4 hours
 
 **By Phase:**
 
@@ -31,10 +31,11 @@ Progress: [################] 60%
 | 02-performance | 3/3 | 22min | 7min |
 | 03-network-protocols | 4/4 | 55min | 14min |
 | 04-user-experience | 4/4 | 21min | 5min |
+| 05-discovery-security | 1/3 | 25min | 25min |
 
 **Recent Trend:**
-- Last 5 plans: 03-02 (24min), 04-01 (6min), 04-02 (6min), 04-03 (4min), 04-04 (5min)
-- Trend: Phase 4 plans consistently fast at 4-6min (established patterns, JSON-backed stores)
+- Last 5 plans: 04-01 (6min), 04-02 (6min), 04-03 (4min), 04-04 (5min), 05-01 (25min)
+- Trend: 05-01 longer due to crypto dependency compilation (x25519-dalek, chacha20poly1305)
 
 *Updated after each plan completion*
 
@@ -112,6 +113,10 @@ Recent decisions affecting current work:
 - [04-04] Corrupted history.json silently starts fresh (matches QueueStore/AliasStore pattern)
 - [04-04] Shell completions use clap_complete::generate() writing to stdout
 - [04-04] format_bytes uses bytesize crate for human-readable size display
+- [05-01] Manual Debug impl for DeviceIdentity to redact secret key (StaticSecret has no Debug)
+- [05-01] AeadCore trait import required for XChaCha20Poly1305::generate_nonce
+- [05-01] TrustStore compares public keys as base64 strings, matching storage format
+- [05-01] Corrupted trusted_devices.json silently starts fresh (matches existing graceful degradation pattern)
 
 ### Pending Todos
 
@@ -124,8 +129,8 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-02-17
-Stopped at: Completed 04-04-PLAN.md (History, completions, Phase 4 integration tests -- Phase 4 COMPLETE, 218 unit + 60 integration = 278 tests passing)
-Resume file: .planning/phases/04-user-experience/04-04-SUMMARY.md
+Stopped at: Completed 05-01-PLAN.md (Security module: X25519 crypto + TOFU trust store -- 245 unit + 67 integration = 312 tests passing)
+Resume file: .planning/phases/05-discovery-security/05-01-SUMMARY.md
 
 ---
 *State initialized: 2026-02-16*
