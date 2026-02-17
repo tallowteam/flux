@@ -15,6 +15,10 @@ pub struct Cli {
     /// Quiet mode: suppress all output except errors
     #[arg(short, long, global = true)]
     pub quiet: bool,
+
+    /// Launch interactive TUI mode
+    #[arg(long, global = true)]
+    pub tui: bool,
 }
 
 #[derive(Subcommand, Debug)]
@@ -48,6 +52,12 @@ pub enum Commands {
 
     /// Manage trusted devices
     Trust(TrustArgs),
+
+    /// Launch interactive TUI mode
+    Ui,
+
+    /// Sync directories (one-way mirror)
+    Sync(SyncArgs),
 }
 
 #[derive(clap::Args, Debug)]
@@ -271,4 +281,18 @@ pub enum TrustAction {
 pub struct TrustRmArgs {
     /// Device name to remove from trust store
     pub name: String,
+}
+
+/// Arguments for the `flux sync` command.
+#[derive(clap::Args, Debug)]
+pub struct SyncArgs {
+    /// Source directory
+    pub source: String,
+
+    /// Destination directory
+    pub dest: String,
+
+    /// Preview sync changes without executing
+    #[arg(long)]
+    pub dry_run: bool,
 }

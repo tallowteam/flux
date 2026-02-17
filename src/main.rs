@@ -12,6 +12,7 @@ mod protocol;
 mod queue;
 mod security;
 mod transfer;
+mod tui;
 
 use cli::args::{Cli, Commands, CpArgs, QueueAction, TrustAction};
 use config::types::Verbosity;
@@ -49,6 +50,13 @@ fn main() {
 
 /// Execute the dispatched command.
 fn run(cli: Cli) -> Result<(), FluxError> {
+    // Check --tui flag before dispatching commands
+    if cli.tui {
+        return tui::launch_tui().map_err(|e| FluxError::Io {
+            source: std::io::Error::new(std::io::ErrorKind::Other, e.to_string()),
+        });
+    }
+
     match cli.command {
         Commands::Cp(args) => {
             tracing::debug!(
@@ -369,6 +377,16 @@ fn run(cli: Cli) -> Result<(), FluxError> {
                     }
                 }
             }
+            Ok(())
+        }
+        Commands::Ui => {
+            tui::launch_tui().map_err(|e| FluxError::Io {
+                source: std::io::Error::new(std::io::ErrorKind::Other, e.to_string()),
+            })?;
+            Ok(())
+        }
+        Commands::Sync(_args) => {
+            eprintln!("flux sync: not yet implemented (coming in Phase 7)");
             Ok(())
         }
     }

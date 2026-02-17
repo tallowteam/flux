@@ -59,6 +59,10 @@ tokio-util = { version = "0.7", features = ["codec"] }
 bincode = { version = "2", features = ["serde"] }
 futures = "0.3"
 
+# TUI (Phase 6)
+ratatui = "0.30"
+crossterm = { version = "0.29", features = ["event-stream"] }
+
 # Error handling
 thiserror = "2"
 anyhow = "1"
