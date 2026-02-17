@@ -30,6 +30,13 @@ impl WebDavBackend {
     ///
     /// The URL should be the WebDAV server root (e.g. "https://server/webdav/").
     /// Optional auth credentials are used for Basic authentication.
+    ///
+    /// # Security
+    ///
+    /// When credentials are supplied and the URL uses plain `http://`, both the
+    /// credentials (sent as HTTP Basic auth) and all transferred file data are
+    /// transmitted in cleartext.  A prominent warning is printed to stderr and
+    /// recorded via `tracing::warn!` to alert the operator at connection time.
     pub fn new(url: &str, auth: Option<Auth>) -> Result<Self, FluxError> {
         let client = Client::builder()
             .timeout(std::time::Duration::from_secs(30))
@@ -39,6 +46,27 @@ impl WebDavBackend {
         // Normalize base URL: ensure it doesn't end with a trailing slash
         // for consistent path joining
         let base_url = url.trim_end_matches('/').to_string();
+
+        // Warn when credentials will be sent over an unencrypted HTTP connection.
+        // The scheme comparison is intentionally ASCII-lowercase because the `url`
+        // crate normalises schemes to lowercase before handing them to the parser.
+        // Only plain `http://` triggers the warning; `https://`, `webdav://`, and
+        // `dav://` are either encrypted or pseudo-schemes mapped to HTTPS by the
+        // server configuration.
+        if base_url.to_ascii_lowercase().starts_with("http://") && auth.is_some() {
+            tracing::warn!(
+                url = %base_url,
+                "WebDAV connection uses HTTP (not HTTPS). \
+                 Credentials and file data will be sent in plaintext."
+            );
+            eprintln!(
+                "WARNING: WebDAV connection uses HTTP (not HTTPS). \
+                 Credentials and file data will be sent in plaintext."
+            );
+            eprintln!(
+                "         Consider using https:// for secure transfers."
+            );
+        }
 
         Ok(WebDavBackend {
             client: Arc::new(client),
@@ -76,10 +104,10 @@ impl WebDavBackend {
 </D:propfind>"#;
 
         let mut headers = HeaderMap::new();
-        headers.insert("Depth", HeaderValue::from_str(depth).unwrap());
+        headers.insert("Depth", HeaderValue::from_str(depth).expect("depth is a valid ASCII header value"));
         headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/xml"));
 
-        let request = self.client.request(reqwest::Method::from_bytes(b"PROPFIND").unwrap(), url)
+        let request = self.client.request(reqwest::Method::from_bytes(b"PROPFIND").expect("PROPFIND is a valid HTTP method"), url)
             .headers(headers)
             .body(propfind_body);
         let request = self.apply_auth(request);
@@ -314,7 +342,7 @@ impl FluxBackend for WebDavBackend {
             let url = self.url_for(&current);
 
             let request = self.client.request(
-                reqwest::Method::from_bytes(b"MKCOL").unwrap(),
+                reqwest::Method::from_bytes(b"MKCOL").expect("MKCOL is a valid HTTP method"),
                 &url,
             );
             let request = self.apply_auth(request);
@@ -550,6 +578,41 @@ mod tests {
             Some(Auth::Password { user, .. }) => assert_eq!(user, "admin"),
             _ => panic!("Expected Password auth"),
         }
+    }
+
+    /// Verify that constructing a backend with `http://` and credentials
+    /// succeeds (the warning is informational only, not a hard error).
+    #[test]
+    fn new_http_with_auth_succeeds_despite_insecure_scheme() {
+        let auth = Auth::Password {
+            user: "user".to_string(),
+            password: "pass".to_string(),
+        };
+        // This emits a warning to stderr; the constructor must still succeed.
+        let backend = WebDavBackend::new("http://nas.local/dav", Some(auth)).unwrap();
+        assert_eq!(backend.base_url, "http://nas.local/dav");
+        assert!(backend.auth.is_some());
+    }
+
+    /// Verify that `http://` without credentials does NOT trigger the warning
+    /// code path (no credentials means no secret is at risk).
+    #[test]
+    fn new_http_without_auth_no_warning() {
+        let backend = WebDavBackend::new("http://nas.local/dav", None).unwrap();
+        assert_eq!(backend.base_url, "http://nas.local/dav");
+        assert!(backend.auth.is_none());
+    }
+
+    /// Verify that `https://` with credentials is accepted silently.
+    #[test]
+    fn new_https_with_auth_no_warning() {
+        let auth = Auth::Password {
+            user: "admin".to_string(),
+            password: "hunter2".to_string(),
+        };
+        let backend = WebDavBackend::new("https://secure.server.com/dav", Some(auth)).unwrap();
+        assert_eq!(backend.base_url, "https://secure.server.com/dav");
+        assert!(backend.auth.is_some());
     }
 
     #[test]

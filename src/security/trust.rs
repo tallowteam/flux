@@ -42,7 +42,7 @@ pub struct TrustedDevice {
 ///
 /// Backed by a JSON file at `config_dir/trusted_devices.json`.
 /// Uses atomic writes (write to `.tmp`, then rename) for crash safety.
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct TrustStore {
     devices: BTreeMap<String, TrustedDevice>,
     #[serde(skip)]
@@ -52,7 +52,7 @@ pub struct TrustStore {
 impl TrustStore {
     /// Load the trust store from `config_dir/trusted_devices.json`.
     /// Returns an empty store if the file does not exist.
-    /// Silently starts fresh if the file is corrupted (matches Flux pattern).
+    /// Returns an error if the file is corrupted (prevents silent trust reset).
     pub fn load(config_dir: &Path) -> Result<Self, FluxError> {
         let path = config_dir.join("trusted_devices.json");
 
@@ -66,19 +66,46 @@ impl TrustStore {
                     Ok(store)
                 }
                 Err(e) => {
-                    // Corrupted file: warn the user and start fresh.
-                    // This is logged as a warning because a corrupted trust store
-                    // means all previously trusted devices will need re-verification.
-                    tracing::warn!(
-                        "Trust store corrupted ({}), starting fresh. \
-                         Previously trusted devices will need re-verification.",
+                    // Corrupted trust store is a security-relevant event.
+                    // An attacker who can corrupt this file can force re-TOFU of all devices.
+                    // Return an error instead of silently resetting.
+                    tracing::error!(
+                        "Trust store corrupted: {}. Run `flux trust reset` to start fresh.",
                         e
                     );
-                    Ok(Self {
-                        devices: BTreeMap::new(),
-                        path,
-                    })
+                    Err(FluxError::TrustError(format!(
+                        "Trust store corrupted ({}). \
+                         Run `flux trust reset` to start fresh, or restore from backup.",
+                        e
+                    )))
                 }
+            }
+        } else {
+            Ok(Self {
+                devices: BTreeMap::new(),
+                path,
+            })
+        }
+    }
+
+    /// Force-load the trust store, resetting to empty if corrupted.
+    /// Only used by `flux trust reset` to intentionally clear a corrupted store.
+    pub fn load_or_reset(config_dir: &Path) -> Result<Self, FluxError> {
+        let path = config_dir.join("trusted_devices.json");
+
+        if path.exists() {
+            let data = std::fs::read_to_string(&path).map_err(|e| {
+                FluxError::TrustError(format!("Failed to read trust store: {}", e))
+            })?;
+            match serde_json::from_str::<TrustStore>(&data) {
+                Ok(mut store) => {
+                    store.path = path;
+                    Ok(store)
+                }
+                Err(_) => Ok(Self {
+                    devices: BTreeMap::new(),
+                    path,
+                }),
             }
         } else {
             Ok(Self {
@@ -272,7 +299,7 @@ mod tests {
     }
 
     #[test]
-    fn corrupted_file_starts_fresh() {
+    fn corrupted_file_returns_error() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(
             dir.path().join("trusted_devices.json"),
@@ -280,7 +307,22 @@ mod tests {
         )
         .unwrap();
 
-        let store = TrustStore::load(dir.path()).unwrap();
+        let result = TrustStore::load(dir.path());
+        assert!(result.is_err());
+        let err = format!("{}", result.unwrap_err());
+        assert!(err.contains("corrupted"));
+    }
+
+    #[test]
+    fn corrupted_file_load_or_reset_starts_fresh() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("trusted_devices.json"),
+            "not valid json!!!",
+        )
+        .unwrap();
+
+        let store = TrustStore::load_or_reset(dir.path()).unwrap();
         assert_eq!(store.device_count(), 0);
     }
 

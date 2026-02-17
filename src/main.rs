@@ -179,7 +179,9 @@ fn run(cli: Cli) -> Result<(), FluxError> {
                         store.save()?;
 
                         // Clone entry details for CpArgs construction
-                        let entry = store.get(id).unwrap().clone();
+                        let entry = store.get(id).ok_or_else(|| {
+                            FluxError::QueueError(format!("Queue entry {} not found", id))
+                        })?.clone();
 
                         eprintln!("\n[#{}] {} -> {}", id, entry.source, entry.dest);
 
@@ -315,7 +317,17 @@ fn run(cli: Cli) -> Result<(), FluxError> {
                 gethostname::gethostname().to_string_lossy().to_string()
             });
 
-            net::sender::send_file_sync(&args.target, file_path, args.encrypt, &device_name)?;
+            if let Some(target) = &args.target {
+                // Direct send mode (existing behavior)
+                net::sender::send_file_sync(target, file_path, !args.no_encrypt, &device_name)?;
+            } else {
+                // Code-phrase mode (Croc-like UX)
+                net::sender::send_with_code_sync(
+                    file_path,
+                    &device_name,
+                    args.code.as_deref(),
+                )?;
+            }
             Ok(())
         }
         Commands::Receive(args) => {
@@ -328,12 +340,19 @@ fn run(cli: Cli) -> Result<(), FluxError> {
                 std::fs::create_dir_all(output_dir)?;
             }
 
-            net::receiver::start_receiver_sync(
-                args.port,
-                output_dir,
-                args.encrypt,
-                &device_name,
-            )?;
+            if let Some(code) = &args.code {
+                // Code-phrase mode (Croc-like UX)
+                net::receiver::receive_with_code_sync(code, output_dir, &device_name)?;
+            } else {
+                // Direct receive mode (existing behavior)
+                net::receiver::start_receiver_sync(
+                    args.port,
+                    output_dir,
+                    !args.no_encrypt,
+                    &device_name,
+                    &args.bind,
+                )?;
+            }
             Ok(())
         }
         Commands::Trust(args) => {
@@ -388,6 +407,22 @@ fn run(cli: Cli) -> Result<(), FluxError> {
         }
         Commands::Sync(args) => {
             sync::execute_sync(args, cli.quiet)
+        }
+        Commands::Verify(args) => {
+            let source = Path::new(&args.source);
+            let dest = Path::new(&args.dest);
+            let filter = transfer::filter::TransferFilter::new(&args.exclude, &args.include)?;
+            let result = transfer::verify::verify_directories(source, dest, &filter, cli.quiet)?;
+
+            // Exit with code 1 if there are any differences
+            if !result.differs.is_empty()
+                || !result.source_only.is_empty()
+                || !result.dest_only.is_empty()
+                || !result.errors.is_empty()
+            {
+                std::process::exit(1);
+            }
+            Ok(())
         }
     }
 }

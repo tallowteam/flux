@@ -10,6 +10,7 @@ use bytesize::ByteSize;
 use crate::cli::args::SyncArgs;
 use crate::error::FluxError;
 use crate::transfer::filter::TransferFilter;
+use crate::transfer::stats::TransferStats;
 
 use self::engine::{compute_sync_plan, execute_sync_plan};
 
@@ -94,17 +95,28 @@ pub fn execute_sync(args: SyncArgs, quiet: bool) -> Result<(), FluxError> {
     }
 
     // Execute the plan
+    let sync_start = std::time::Instant::now();
+    let total_files = plan.files_to_copy + plan.files_to_update + plan.files_to_delete;
     let result = execute_sync_plan(&plan, quiet, args.verify)?;
 
-    // Print summary
+    // Print summary with throughput
     if !quiet {
+        let mut stats = TransferStats::new(total_files, plan.total_copy_bytes);
+        stats.started = sync_start;
+        stats.bytes_done = result.bytes_transferred;
+        stats.files_done = result.files_copied + result.files_updated + result.files_deleted;
+        stats.files_skipped = result.files_skipped;
+        let throughput = ByteSize(stats.throughput_bps());
+
         eprintln!(
-            "Sync complete: {} copied, {} updated, {} deleted, {} skipped ({})",
+            "Sync complete: {} copied, {} updated, {} deleted, {} skipped ({}) in {:.1}s @ {}/s",
             result.files_copied,
             result.files_updated,
             result.files_deleted,
             result.files_skipped,
             ByteSize(result.bytes_transferred),
+            stats.elapsed().as_secs_f64(),
+            throughput,
         );
     }
 

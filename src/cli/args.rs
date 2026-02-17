@@ -58,6 +58,9 @@ pub enum Commands {
 
     /// Sync directories (one-way mirror)
     Sync(SyncArgs),
+
+    /// Compare two directories and report differences
+    Verify(VerifyArgs),
 }
 
 #[derive(clap::Args, Debug)]
@@ -228,12 +231,16 @@ pub struct SendArgs {
     /// File to send
     pub file: String,
 
-    /// Target device (@devicename, host:port, or IP)
-    pub target: String,
+    /// Target device (@devicename, host:port, or IP). Omit to use code-phrase mode.
+    pub target: Option<String>,
 
-    /// Enable end-to-end encryption
+    /// Custom code phrase (code-phrase mode only)
     #[arg(long)]
-    pub encrypt: bool,
+    pub code: Option<String>,
+
+    /// Disable end-to-end encryption (encryption is enabled by default)
+    #[arg(long)]
+    pub no_encrypt: bool,
 
     /// Device name to identify as
     #[arg(long)]
@@ -243,6 +250,9 @@ pub struct SendArgs {
 /// Arguments for the `flux receive` command.
 #[derive(clap::Args, Debug)]
 pub struct ReceiveArgs {
+    /// Code phrase from sender (e.g., 3847-ace-dog-elk). Omit to listen for direct connections.
+    pub code: Option<String>,
+
     /// Directory to save received files (default: current directory)
     #[arg(short, long, default_value = ".")]
     pub output: String,
@@ -251,13 +261,17 @@ pub struct ReceiveArgs {
     #[arg(short, long, default_value = "9741")]
     pub port: u16,
 
-    /// Enable end-to-end encryption (require encrypted connections)
+    /// Disable end-to-end encryption (encryption is enabled by default)
     #[arg(long)]
-    pub encrypt: bool,
+    pub no_encrypt: bool,
 
     /// Device name to advertise
     #[arg(long)]
     pub name: Option<String>,
+
+    /// Address to bind to (default: 0.0.0.0 for all interfaces)
+    #[arg(long, default_value = "0.0.0.0")]
+    pub bind: String,
 }
 
 /// Arguments for the `flux trust` command.
@@ -323,4 +337,22 @@ pub struct SyncArgs {
     /// Force sync even when source is empty (safety override for --delete)
     #[arg(long)]
     pub force: bool,
+}
+
+/// Arguments for the `flux verify` command.
+#[derive(clap::Args, Debug)]
+pub struct VerifyArgs {
+    /// Source directory
+    pub source: String,
+
+    /// Destination directory
+    pub dest: String,
+
+    /// Exclude files matching glob pattern (can be repeated)
+    #[arg(long, action = clap::ArgAction::Append)]
+    pub exclude: Vec<String>,
+
+    /// Include only files matching glob pattern (can be repeated)
+    #[arg(long, action = clap::ArgAction::Append)]
+    pub include: Vec<String>,
 }

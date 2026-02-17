@@ -18,6 +18,12 @@ use crate::net::protocol::{
     decode_message, encode_message, FluxMessage, CHUNK_SIZE, MAX_FRAME_SIZE, PROTOCOL_VERSION,
 };
 use crate::security::crypto::EncryptedChannel;
+use crate::transfer::stats::TransferStats;
+
+/// Timeout for receiving HandshakeAck from the receiver.
+const HANDSHAKE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+/// Timeout for receiving TransferComplete from the receiver after all data is sent.
+const COMPLETION_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300);
 
 /// Send a file to a remote Flux receiver over TCP.
 ///
@@ -70,10 +76,10 @@ pub async fn send_file(
         .await
         .map_err(|e| FluxError::TransferError(format!("Failed to send handshake: {}", e)))?;
 
-    // Wait for HandshakeAck
-    let ack_bytes = framed
-        .next()
+    // Wait for HandshakeAck (with timeout to prevent indefinite stalls)
+    let ack_bytes = tokio::time::timeout(HANDSHAKE_TIMEOUT, framed.next())
         .await
+        .map_err(|_| FluxError::TransferError("Timed out waiting for handshake response".into()))?
         .ok_or_else(|| FluxError::TransferError("Connection closed during handshake".into()))?
         .map_err(|e| FluxError::TransferError(format!("Failed to receive handshake ack: {}", e)))?;
 
@@ -104,7 +110,7 @@ pub async fn send_file(
                     })?;
                 let peer_public = x25519_dalek::PublicKey::from(peer_pub_bytes);
                 Some(EncryptedChannel::complete(
-                    ephemeral_secret.unwrap(),
+                    ephemeral_secret.expect("ephemeral_secret is Some when encrypt is true"),
                     &peer_public,
                 ))
             } else {
@@ -136,16 +142,23 @@ pub async fn send_file(
         .map(|n| n.to_string_lossy().to_string())
         .unwrap_or_else(|| "unnamed".to_string());
 
-    // --- Read file data and compute BLAKE3 checksum ---
-    let file_data = std::fs::read(file_path).map_err(|e| {
-        FluxError::TransferError(format!(
-            "Failed to read file '{}': {}",
-            file_path.display(),
-            e
-        ))
-    })?;
-
-    let checksum = blake3::hash(&file_data).to_hex().to_string();
+    // --- Pass 1: Compute BLAKE3 checksum by streaming from disk ---
+    let checksum = {
+        use std::io::Read;
+        let mut file = std::fs::File::open(file_path).map_err(|e| {
+            FluxError::TransferError(format!("Failed to open '{}': {}", file_path.display(), e))
+        })?;
+        let mut hasher = blake3::Hasher::new();
+        let mut buf = vec![0u8; CHUNK_SIZE];
+        loop {
+            let n = file.read(&mut buf).map_err(|e| {
+                FluxError::TransferError(format!("Failed to read '{}': {}", file_path.display(), e))
+            })?;
+            if n == 0 { break; }
+            hasher.update(&buf[..n]);
+        }
+        hasher.finalize().to_hex().to_string()
+    };
 
     let header = FluxMessage::FileHeader {
         filename: filename.clone(),
@@ -158,53 +171,60 @@ pub async fn send_file(
         .await
         .map_err(|e| FluxError::TransferError(format!("Failed to send file header: {}", e)))?;
 
+    // --- Pass 2: Stream file data in chunks ---
     let mut offset: u64 = 0;
-    let total = file_data.len();
-    let mut chunk_start = 0usize;
+    let mut buf = vec![0u8; CHUNK_SIZE];
 
-    // Progress bar
     let pb = indicatif::ProgressBar::new(file_size);
     pb.set_style(
         indicatif::ProgressStyle::with_template(
             "{spinner:.green} [{bar:40.cyan/blue}] {bytes}/{total_bytes} ({bytes_per_sec})",
         )
-        .unwrap()
+        .expect("static progress template is valid")
         .progress_chars("#>-"),
     );
     pb.set_draw_target(indicatif::ProgressDrawTarget::stderr());
 
-    while chunk_start < total {
-        let chunk_end = std::cmp::min(chunk_start + CHUNK_SIZE, total);
-        let raw_data = &file_data[chunk_start..chunk_end];
+    {
+        use std::io::Read;
+        let mut file = std::fs::File::open(file_path).map_err(|e| {
+            FluxError::TransferError(format!("Failed to open '{}': {}", file_path.display(), e))
+        })?;
+        loop {
+            let n = file.read(&mut buf).map_err(|e| {
+                FluxError::TransferError(format!("Failed to read '{}': {}", file_path.display(), e))
+            })?;
+            if n == 0 { break; }
 
-        let (data, nonce) = if let Some(ref ch) = channel {
-            let (ct, n) = ch.encrypt(raw_data)?;
-            (ct, Some(n.to_vec()))
-        } else {
-            (raw_data.to_vec(), None)
-        };
+            let raw_data = &buf[..n];
+            let (data, nonce) = if let Some(ref ch) = channel {
+                let (ct, nc) = ch.encrypt(raw_data)?;
+                (ct, Some(nc.to_vec()))
+            } else {
+                (raw_data.to_vec(), None)
+            };
 
-        let chunk_msg = FluxMessage::DataChunk {
-            offset,
-            data,
-            nonce,
-        };
-        framed
-            .send(Bytes::from(encode_message(&chunk_msg)?))
-            .await
-            .map_err(|e| FluxError::TransferError(format!("Failed to send data chunk: {}", e)))?;
+            let chunk_msg = FluxMessage::DataChunk {
+                offset,
+                data,
+                nonce,
+            };
+            framed
+                .send(Bytes::from(encode_message(&chunk_msg)?))
+                .await
+                .map_err(|e| FluxError::TransferError(format!("Failed to send data chunk: {}", e)))?;
 
-        offset += (chunk_end - chunk_start) as u64;
-        chunk_start = chunk_end;
-        pb.set_position(offset);
+            offset += n as u64;
+            pb.set_position(offset);
+        }
     }
 
     pb.finish_and_clear();
 
-    // --- Wait for TransferComplete ---
-    let complete_bytes = framed
-        .next()
+    // --- Wait for TransferComplete (with timeout) ---
+    let complete_bytes = tokio::time::timeout(COMPLETION_TIMEOUT, framed.next())
         .await
+        .map_err(|_| FluxError::TransferError("Timed out waiting for transfer confirmation".into()))?
         .ok_or_else(|| {
             FluxError::TransferError("Connection closed before transfer complete".into())
         })?
@@ -217,13 +237,10 @@ pub async fn send_file(
         FluxMessage::TransferComplete {
             bytes_received, ..
         } => {
-            let elapsed = started.elapsed();
-            eprintln!(
-                "Sent: {} ({} bytes) in {:.1}s",
-                filename,
-                bytes_received,
-                elapsed.as_secs_f64()
-            );
+            let mut stats = TransferStats::new(1, file_size);
+            stats.started = started;
+            stats.add_done(bytes_received);
+            stats.print_file_summary(&filename, false);
         }
         FluxMessage::Error { message } => {
             return Err(FluxError::TransferError(format!(
@@ -239,6 +256,281 @@ pub async fn send_file(
     }
 
     Ok(())
+}
+
+/// Send a file using code-phrase mode (Croc-like UX).
+///
+/// The sender becomes a TCP server:
+/// 1. Generate (or validate custom) code phrase
+/// 2. Bind TCP on OS-assigned port
+/// 3. Register mDNS with code_hash TXT property
+/// 4. Print code phrase and wait for receiver
+/// 5. Accept one connection, perform encrypted transfer
+///
+/// Always encrypted -- no `--encrypt` flag needed.
+pub async fn send_with_code(
+    file_path: &Path,
+    device_name: &str,
+    code_override: Option<&str>,
+) -> Result<(), FluxError> {
+    use crate::discovery::mdns::register_flux_service;
+    use crate::discovery::service::FluxService;
+    use crate::net::codephrase;
+    use tokio::net::TcpListener;
+
+    let started = Instant::now();
+
+    // Generate or validate code phrase
+    let code = if let Some(custom) = code_override {
+        codephrase::validate(custom).map_err(FluxError::TransferError)?;
+        custom.to_string()
+    } else {
+        codephrase::generate()
+    };
+
+    // Verify file exists and read metadata
+    if !file_path.exists() {
+        return Err(FluxError::SourceNotFound {
+            path: file_path.to_path_buf(),
+        });
+    }
+
+    let file_meta = std::fs::metadata(file_path).map_err(|e| {
+        FluxError::TransferError(format!(
+            "Cannot read file '{}': {}",
+            file_path.display(),
+            e
+        ))
+    })?;
+    let file_size = file_meta.len();
+
+    let filename = file_path
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| "unnamed".to_string());
+
+    // Compute BLAKE3 checksum by streaming from disk (no full-file buffering)
+    let checksum = {
+        use std::io::Read;
+        let mut file = std::fs::File::open(file_path).map_err(|e| {
+            FluxError::TransferError(format!("Failed to open '{}': {}", file_path.display(), e))
+        })?;
+        let mut hasher = blake3::Hasher::new();
+        let mut buf = vec![0u8; CHUNK_SIZE];
+        loop {
+            let n = file.read(&mut buf).map_err(|e| {
+                FluxError::TransferError(format!("Failed to read '{}': {}", file_path.display(), e))
+            })?;
+            if n == 0 { break; }
+            hasher.update(&buf[..n]);
+        }
+        hasher.finalize().to_hex().to_string()
+    };
+
+    // Bind TCP on port 0 (OS-assigned)
+    let listener = TcpListener::bind("0.0.0.0:0")
+        .await
+        .map_err(|e| FluxError::TransferError(format!("Failed to bind TCP listener: {}", e)))?;
+
+    let local_addr = listener.local_addr().map_err(|e| {
+        FluxError::TransferError(format!("Failed to get local address: {}", e))
+    })?;
+    let actual_port = local_addr.port();
+
+    // Generate ephemeral X25519 keypair (always encrypted in code mode)
+    let (ephemeral_secret, our_public) = EncryptedChannel::initiate();
+    let our_pub_bytes = our_public.as_bytes().to_vec();
+
+    // Register mDNS with code_hash TXT property
+    let hash = codephrase::code_hash(&code);
+    let service = FluxService::new(Some(device_name.to_string()), actual_port);
+    let _mdns_daemon = register_flux_service(&service, None, Some(&hash))?;
+
+    // Print code phrase and instructions
+    let human_size = bytesize::ByteSize(file_size).to_string();
+    eprintln!("Code phrase: {}", code);
+    eprintln!("On the other device run:");
+    eprintln!("  flux receive {}", code);
+    eprintln!(
+        "Sending {} ({}) - waiting for receiver...",
+        filename, human_size
+    );
+
+    // Accept one connection (with timeout)
+    let (stream, peer_addr) = tokio::time::timeout(
+        std::time::Duration::from_secs(5 * 60),
+        listener.accept(),
+    )
+    .await
+    .map_err(|_| FluxError::TransferError("Timed out waiting for receiver (5 minutes)".into()))?
+    .map_err(|e| FluxError::TransferError(format!("Failed to accept connection: {}", e)))?;
+
+    tracing::debug!("Connection from {}", peer_addr);
+
+    let codec = LengthDelimitedCodec::builder()
+        .max_frame_length(MAX_FRAME_SIZE)
+        .new_codec();
+    let mut framed = Framed::new(stream, codec);
+
+    // Send Handshake with public key
+    let handshake = FluxMessage::Handshake {
+        version: PROTOCOL_VERSION,
+        device_name: device_name.to_string(),
+        public_key: Some(our_pub_bytes),
+    };
+    framed
+        .send(Bytes::from(encode_message(&handshake)?))
+        .await
+        .map_err(|e| FluxError::TransferError(format!("Failed to send handshake: {}", e)))?;
+
+    // Wait for HandshakeAck (with timeout)
+    let ack_bytes = tokio::time::timeout(HANDSHAKE_TIMEOUT, framed.next())
+        .await
+        .map_err(|_| FluxError::TransferError("Timed out waiting for handshake response".into()))?
+        .ok_or_else(|| FluxError::TransferError("Connection closed during handshake".into()))?
+        .map_err(|e| FluxError::TransferError(format!("Failed to receive handshake ack: {}", e)))?;
+
+    let ack = decode_message(&ack_bytes)?;
+    let channel = match ack {
+        FluxMessage::HandshakeAck {
+            accepted,
+            public_key: peer_key,
+            reason,
+        } => {
+            if !accepted {
+                return Err(FluxError::TransferError(format!(
+                    "Connection rejected: {}",
+                    reason.unwrap_or_else(|| "unknown reason".into())
+                )));
+            }
+            let peer_pub_bytes: [u8; 32] = peer_key
+                .ok_or_else(|| {
+                    FluxError::EncryptionError(
+                        "Receiver accepted but sent no public key".into(),
+                    )
+                })?
+                .try_into()
+                .map_err(|_| {
+                    FluxError::EncryptionError("Receiver public key must be 32 bytes".into())
+                })?;
+            let peer_public = x25519_dalek::PublicKey::from(peer_pub_bytes);
+            // Bind code phrase to key exchange (PAKE-like authentication)
+            EncryptedChannel::complete_with_code(ephemeral_secret, &peer_public, &code)
+        }
+        FluxMessage::Error { message } => {
+            return Err(FluxError::TransferError(format!("Peer error: {}", message)));
+        }
+        _ => {
+            return Err(FluxError::TransferError(
+                "Unexpected message during handshake".into(),
+            ));
+        }
+    };
+
+    // Send FileHeader
+    let header = FluxMessage::FileHeader {
+        filename: filename.clone(),
+        size: file_size,
+        checksum: Some(checksum),
+        encrypted: true,
+    };
+    framed
+        .send(Bytes::from(encode_message(&header)?))
+        .await
+        .map_err(|e| FluxError::TransferError(format!("Failed to send file header: {}", e)))?;
+
+    // Stream encrypted DataChunks from disk (no full-file buffering)
+    let mut offset: u64 = 0;
+    let mut buf = vec![0u8; CHUNK_SIZE];
+
+    let pb = indicatif::ProgressBar::new(file_size);
+    pb.set_style(
+        indicatif::ProgressStyle::with_template(
+            "{spinner:.green} [{bar:40.cyan/blue}] {bytes}/{total_bytes} ({bytes_per_sec})",
+        )
+        .expect("static progress template is valid")
+        .progress_chars("#>-"),
+    );
+    pb.set_draw_target(indicatif::ProgressDrawTarget::stderr());
+
+    {
+        use std::io::Read;
+        let mut file = std::fs::File::open(file_path).map_err(|e| {
+            FluxError::TransferError(format!("Failed to open '{}': {}", file_path.display(), e))
+        })?;
+        loop {
+            let n = file.read(&mut buf).map_err(|e| {
+                FluxError::TransferError(format!("Failed to read '{}': {}", file_path.display(), e))
+            })?;
+            if n == 0 { break; }
+
+            let raw_data = &buf[..n];
+            let (data, nonce) = channel.encrypt(raw_data)?;
+
+            let chunk_msg = FluxMessage::DataChunk {
+                offset,
+                data,
+                nonce: Some(nonce.to_vec()),
+            };
+            framed
+                .send(Bytes::from(encode_message(&chunk_msg)?))
+                .await
+                .map_err(|e| FluxError::TransferError(format!("Failed to send data chunk: {}", e)))?;
+
+            offset += n as u64;
+            pb.set_position(offset);
+        }
+    }
+
+    pb.finish_and_clear();
+
+    // Wait for TransferComplete (with timeout)
+    let complete_bytes = tokio::time::timeout(COMPLETION_TIMEOUT, framed.next())
+        .await
+        .map_err(|_| FluxError::TransferError("Timed out waiting for transfer confirmation".into()))?
+        .ok_or_else(|| {
+            FluxError::TransferError("Connection closed before transfer complete".into())
+        })?
+        .map_err(|e| {
+            FluxError::TransferError(format!("Failed to receive transfer complete: {}", e))
+        })?;
+
+    let complete = decode_message(&complete_bytes)?;
+    match complete {
+        FluxMessage::TransferComplete {
+            bytes_received, ..
+        } => {
+            let mut stats = TransferStats::new(1, file_size);
+            stats.started = started;
+            stats.add_done(bytes_received);
+            stats.print_file_summary(&filename, false);
+        }
+        FluxMessage::Error { message } => {
+            return Err(FluxError::TransferError(format!(
+                "Receiver error: {}",
+                message
+            )));
+        }
+        _ => {
+            return Err(FluxError::TransferError(
+                "Unexpected message after data transfer".into(),
+            ));
+        }
+    }
+
+    Ok(())
+}
+
+/// Synchronous wrapper for code-phrase send mode.
+pub fn send_with_code_sync(
+    file_path: &Path,
+    device_name: &str,
+    code_override: Option<&str>,
+) -> Result<(), FluxError> {
+    let rt = tokio::runtime::Runtime::new()
+        .map_err(|e| FluxError::TransferError(format!("Failed to create async runtime: {}", e)))?;
+
+    rt.block_on(send_with_code(file_path, device_name, code_override))
 }
 
 /// Resolve a target string to (host, port).

@@ -1,5 +1,7 @@
 use chrono::{DateTime, Utc};
+use fs2::FileExt;
 use serde::{Deserialize, Serialize};
+use std::fs::File;
 use std::path::{Path, PathBuf};
 
 use crate::error::FluxError;
@@ -22,18 +24,43 @@ pub struct HistoryEntry {
 /// Stores transfer history in `history.json` within the Flux data directory.
 /// Entries are capped at a configurable limit; oldest entries are removed
 /// when the limit is exceeded.
+///
+/// An exclusive advisory lock on `history.lock` is held for the entire
+/// lifetime of this struct and released automatically on drop, preventing
+/// concurrent writers from corrupting the history file.
 pub struct HistoryStore {
     path: PathBuf,
     entries: Vec<HistoryEntry>,
     limit: usize,
+    /// Holds the open lock file. The `fs2` exclusive lock is tied to the file
+    /// descriptor; dropping this field releases the lock.
+    _lock_file: File,
 }
 
 impl HistoryStore {
     /// Load history from `data_dir/history.json`.
     ///
-    /// If the file does not exist, returns an empty history.
-    /// If the file is corrupted, logs a warning and starts fresh (graceful degradation).
+    /// Acquires an exclusive advisory lock on `data_dir/history.lock` before
+    /// reading the state file. The lock is held until the returned
+    /// `HistoryStore` is dropped. If another process already holds the lock
+    /// this call blocks until that process releases it.
+    ///
+    /// If the history file does not exist, returns an empty history. If the
+    /// file is corrupted, logs a warning and starts fresh (graceful
+    /// degradation).
     pub fn load(data_dir: &Path, limit: usize) -> Result<Self, FluxError> {
+        let lock_path = data_dir.join("history.lock");
+        let lock_file = File::options()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(&lock_path)
+            .map_err(|e| FluxError::Io { source: e })?;
+        lock_file
+            .lock_exclusive()
+            .map_err(|e| FluxError::Io { source: e })?;
+
         let path = data_dir.join("history.json");
 
         if path.exists() {
@@ -45,6 +72,7 @@ impl HistoryStore {
                     path,
                     entries,
                     limit,
+                    _lock_file: lock_file,
                 }),
                 Err(e) => {
                     tracing::warn!("Corrupted history.json, starting fresh: {}", e);
@@ -52,6 +80,7 @@ impl HistoryStore {
                         path,
                         entries: Vec::new(),
                         limit,
+                        _lock_file: lock_file,
                     })
                 }
             }
@@ -60,6 +89,7 @@ impl HistoryStore {
                 path,
                 entries: Vec::new(),
                 limit,
+                _lock_file: lock_file,
             })
         }
     }

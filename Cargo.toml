@@ -69,8 +69,11 @@ notify-debouncer-full = "0.7"
 cron = "0.15"
 
 # Secure memory zeroing
-zeroize = { version = "1", features = ["derive"] }
+zeroize = { version = "1", features = ["derive", "serde"] }
 subtle = "2"
+
+# File locking for queue and history state files
+fs2 = "0.4"
 
 # Error handling
 thiserror = "2"
@@ -79,6 +82,9 @@ anyhow = "1"
 # Logging
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[profile.release]
+overflow-checks = true
 
 [dev-dependencies]
 tempfile = "3"

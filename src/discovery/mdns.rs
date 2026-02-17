@@ -15,16 +15,19 @@ use std::time::{Duration, Instant};
 /// TXT properties advertised:
 /// - `version`: the Flux package version (from Cargo.toml)
 /// - `pubkey`: base64-encoded public key (optional, for TOFU)
+/// - `code_hash`: BLAKE3 hash prefix of code phrase (optional, for code-phrase mode)
 ///
 /// # Arguments
 /// - `service`: The FluxService describing this device
 /// - `public_key`: Optional base64-encoded public key to advertise
+/// - `code_hash`: Optional BLAKE3 hash prefix for code-phrase discovery
 ///
 /// # Returns
 /// The `ServiceDaemon` handle. Drop it to unregister.
 pub fn register_flux_service(
     service: &FluxService,
     public_key: Option<&str>,
+    code_hash: Option<&str>,
 ) -> Result<ServiceDaemon, FluxError> {
     let mdns = ServiceDaemon::new()
         .map_err(|e| FluxError::DiscoveryError(format!("Failed to create mDNS daemon: {}", e)))?;
@@ -37,9 +40,12 @@ pub fn register_flux_service(
         ("version", env!("CARGO_PKG_VERSION")),
     ];
 
-    // Temporarily hold the public_key to satisfy borrow checker
     if let Some(pk) = public_key {
         properties.push(("pubkey", pk));
+    }
+
+    if let Some(ch) = code_hash {
+        properties.push(("code_hash", ch));
     }
 
     let service_info = ServiceInfo::new(
@@ -57,6 +63,79 @@ pub fn register_flux_service(
         .map_err(|e| FluxError::DiscoveryError(format!("Failed to register service: {}", e)))?;
 
     Ok(mdns)
+}
+
+/// Discover a Flux sender by code hash via mDNS.
+///
+/// Browses for `_flux._tcp.local.` services and matches the `code_hash` TXT
+/// property against the expected hash. Returns immediately on first match,
+/// or `None` after the timeout expires.
+///
+/// # Arguments
+/// - `expected_hash`: The BLAKE3 hash prefix to match (16 hex chars)
+/// - `timeout_secs`: How long to search before giving up
+pub fn discover_by_code_hash(
+    expected_hash: &str,
+    timeout_secs: u64,
+) -> Result<Option<DiscoveredDevice>, FluxError> {
+    let mdns = ServiceDaemon::new()
+        .map_err(|e| FluxError::DiscoveryError(format!("Failed to create mDNS daemon: {}", e)))?;
+
+    let receiver = mdns
+        .browse(SERVICE_TYPE)
+        .map_err(|e| FluxError::DiscoveryError(format!("Failed to browse: {}", e)))?;
+
+    let deadline = Instant::now() + Duration::from_secs(timeout_secs);
+
+    while Instant::now() < deadline {
+        match receiver.recv_timeout(Duration::from_millis(500)) {
+            Ok(ServiceEvent::ServiceResolved(info)) => {
+                // Check if this service has a matching code_hash
+                let hash_match = info
+                    .txt_properties
+                    .get("code_hash")
+                    .map(|p| p.val_str() == expected_hash)
+                    .unwrap_or(false);
+
+                if hash_match {
+                    let instance_name = extract_instance_name(&info.fullname);
+
+                    let addr = info
+                        .addresses
+                        .iter()
+                        .find(|a| a.is_ipv4())
+                        .or_else(|| info.addresses.iter().next());
+
+                    if let Some(scoped_ip) = addr {
+                        let host = scoped_ip.to_ip_addr().to_string();
+                        let version = info
+                            .txt_properties
+                            .get("version")
+                            .map(|p| p.val_str().to_string());
+                        let public_key = info
+                            .txt_properties
+                            .get("pubkey")
+                            .map(|p| p.val_str().to_string());
+
+                        mdns.shutdown().ok();
+
+                        return Ok(Some(DiscoveredDevice {
+                            name: instance_name,
+                            host,
+                            port: info.port,
+                            version,
+                            public_key,
+                        }));
+                    }
+                }
+            }
+            Ok(_) => {}
+            Err(_) => {}
+        }
+    }
+
+    mdns.shutdown().ok();
+    Ok(None)
 }
 
 /// Discover Flux devices on the local network via mDNS.
@@ -192,7 +271,7 @@ mod tests {
         use crate::discovery::service::DEFAULT_PORT;
 
         let service = FluxService::new(Some("test-flux-device".to_string()), DEFAULT_PORT);
-        let daemon = register_flux_service(&service, None).unwrap();
+        let daemon = register_flux_service(&service, None, None).unwrap();
 
         // Give mDNS time to propagate
         std::thread::sleep(Duration::from_secs(2));

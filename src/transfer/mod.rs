@@ -6,7 +6,9 @@ pub mod copy;
 pub mod filter;
 pub mod parallel;
 pub mod resume;
+pub mod stats;
 pub mod throttle;
+pub mod verify;
 
 use std::path::{Path, PathBuf};
 
@@ -18,7 +20,7 @@ use crate::cli::args::CpArgs;
 use crate::config;
 use crate::config::types::{ConflictStrategy, FailureStrategy};
 use crate::error::FluxError;
-use crate::progress::bar::{create_directory_progress, create_file_progress};
+use crate::progress::bar::{create_file_progress, create_transfer_progress};
 use crate::protocol::detect_protocol;
 
 use self::checksum::hash_file;
@@ -28,6 +30,7 @@ use self::copy::copy_file_with_progress;
 use self::filter::TransferFilter;
 use self::parallel::parallel_copy_chunked;
 use self::resume::TransferManifest;
+use self::stats::TransferStats;
 use self::throttle::parse_bandwidth;
 
 /// Aggregated result of a directory copy operation.
@@ -293,7 +296,7 @@ pub fn execute_copy(args: CpArgs, quiet: bool) -> Result<(), FluxError> {
             } else {
                 // Fresh chunk plan
                 resume_chunks = Some(chunk_file(size, chunk_count));
-                resume_chunks.as_mut().unwrap()
+                resume_chunks.as_mut().expect("just assigned Some above")
             };
 
             // Save initial manifest if --resume
@@ -399,6 +402,18 @@ pub fn execute_copy(args: CpArgs, quiet: bool) -> Result<(), FluxError> {
             if !quiet {
                 eprintln!("Integrity verified (BLAKE3)");
             }
+        }
+
+        // Print completion summary with throughput
+        {
+            let mut stats = TransferStats::new(1, size);
+            stats.started = start_time;
+            stats.add_done(size);
+            let filename = source
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| source.display().to_string());
+            stats.print_file_summary(&filename, quiet);
         }
 
         // Record in history (best-effort, don't fail the transfer on history error)
@@ -651,17 +666,23 @@ fn copy_directory(
         }
     }
 
-    // First pass: count files for progress bar total
-    let file_count = WalkDir::new(&source_clean)
+    // First pass: count files and total bytes for progress bar
+    let mut file_count = 0u64;
+    let mut total_bytes = 0u64;
+    for entry in WalkDir::new(&source_clean)
         .follow_links(false)
         .into_iter()
         .filter_entry(|e| !filter.is_excluded_dir(e))
         .filter_map(|e| e.ok())
         .filter(|e| e.file_type().is_file())
         .filter(|e| filter.should_transfer(e.path()))
-        .count() as u64;
+    {
+        file_count += 1;
+        total_bytes += entry.metadata().map(|m| m.len()).unwrap_or(0);
+    }
 
-    let progress = create_directory_progress(file_count, quiet);
+    let progress = create_transfer_progress(total_bytes, quiet);
+    let dir_start = std::time::Instant::now();
     let mut result = TransferResult::new();
 
     // Second pass: actual copy
@@ -705,12 +726,23 @@ fn copy_directory(
                 continue;
             }
 
+            // Determine file size early (needed for progress tracking)
+            let file_size = entry.metadata().map(|m| m.len()).unwrap_or(0);
+
+            // Show current filename in progress bar
+            progress.set_message(
+                entry.path()
+                    .file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_default(),
+            );
+
             // --- Conflict resolution ---
             let actual_dest = match resolve_conflict(&dest_path, conflict_strategy)? {
                 Some(path) => path,
                 None => {
                     // Skip this file
-                    progress.inc(1);
+                    progress.inc(file_size);
                     continue;
                 }
             };
@@ -723,14 +755,11 @@ fn copy_directory(
                             entry.path().to_path_buf(),
                             FluxError::Io { source: e },
                         );
-                        progress.inc(1);
+                        progress.inc(file_size);
                         continue;
                     }
                 }
             }
-
-            // Determine per-file chunk count
-            let file_size = entry.metadata().map(|m| m.len()).unwrap_or(0);
             let file_chunk_count = if chunks > 0 {
                 // Use explicit chunk setting, but only if file is non-empty
                 // and chunk count > 1 and file is large enough
@@ -782,11 +811,22 @@ fn copy_directory(
                     result.add_error(entry.path().to_path_buf(), e);
                 }
             }
-            progress.inc(1);
+            progress.inc(file_size);
         }
     }
 
-    progress.finish_with_message("done");
+    progress.finish_and_clear();
+
+    // Print completion summary with throughput
+    {
+        let mut stats = TransferStats::new(file_count, total_bytes);
+        stats.started = dir_start;
+        stats.bytes_done = result.bytes_copied;
+        stats.files_done = result.files_copied;
+        stats.files_failed = result.errors.len() as u64;
+        stats.print_summary(quiet);
+    }
+
     Ok(result)
 }
 
@@ -839,7 +879,7 @@ fn copy_with_failure_handling(
                     }
                 }
             }
-            Err(last_err.unwrap())
+            Err(last_err.expect("last_err is Some after at least one retry attempt"))
         }
         FailureStrategy::Skip => {
             // Just try once; on failure, return the error

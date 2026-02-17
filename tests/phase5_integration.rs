@@ -38,7 +38,7 @@ fn test_send_help() {
         .assert()
         .success()
         .stdout(predicate::str::contains("Send"))
-        .stdout(predicate::str::contains("--encrypt"))
+        .stdout(predicate::str::contains("--no-encrypt"))
         .stdout(predicate::str::contains("TARGET"));
 }
 
@@ -53,7 +53,7 @@ fn test_receive_help() {
         .success()
         .stdout(predicate::str::contains("Receive"))
         .stdout(predicate::str::contains("--port"))
-        .stdout(predicate::str::contains("--encrypt"));
+        .stdout(predicate::str::contains("--no-encrypt"));
 }
 
 #[test]
@@ -270,7 +270,6 @@ fn test_send_receive_encrypted() {
             &port.to_string(),
             "--output",
             recv_output.to_str().unwrap(),
-            "--encrypt",
         ]);
         cmd.timeout(std::time::Duration::from_secs(10));
         cmd.assert();
@@ -278,11 +277,10 @@ fn test_send_receive_encrypted() {
 
     std::thread::sleep(std::time::Duration::from_secs(2));
 
-    // Send with encryption
+    // Send with encryption (on by default)
     flux_isolated(iso.path(), data.path())
         .args([
             "send",
-            "--encrypt",
             source_path.to_str().unwrap(),
             &format!("127.0.0.1:{}", port),
         ])

@@ -18,7 +18,7 @@ use chacha20poly1305::aead::{Aead, KeyInit, OsRng};
 use chacha20poly1305::{AeadCore, XChaCha20Poly1305};
 use serde::{Deserialize, Serialize};
 use x25519_dalek::{EphemeralSecret, PublicKey, StaticSecret};
-use zeroize::Zeroize;
+use zeroize::{Zeroize, Zeroizing};
 
 use crate::error::FluxError;
 
@@ -46,29 +46,24 @@ impl std::fmt::Debug for DeviceIdentity {
 }
 
 /// Serializable format for persisting the identity key pair.
+///
+/// `secret_key` is wrapped in `Zeroizing` so the heap-allocated base64 string
+/// is overwritten with zeros when this struct is dropped.  This limits the
+/// window during which secret material lives in plaintext on the heap.
 #[derive(Serialize, Deserialize)]
 struct IdentityFile {
-    secret_key: String, // base64-encoded 32 bytes
-    public_key: String, // base64-encoded 32 bytes
+    secret_key: Zeroizing<String>, // base64-encoded 32 bytes
+    public_key: String,            // base64-encoded 32 bytes
 }
 
-impl Drop for DeviceIdentity {
-    fn drop(&mut self) {
-        // Zeroize the secret key material on drop.
-        // StaticSecret stores [u8; 32] internally -- we zero it via its byte representation.
-        // PublicKey is not secret, but we zero it to avoid leaving correlated data.
-        let secret_bytes = self.secret_key.as_bytes();
-        // SAFETY: We own self and it's being dropped. We cast away const to zeroize in place.
-        // This is safe because no one else can observe the value after drop.
-        unsafe {
-            let ptr = secret_bytes.as_ptr() as *mut u8;
-            std::ptr::write_volatile(ptr, 0);
-            for i in 0..32 {
-                std::ptr::write_volatile(ptr.add(i), 0);
-            }
-        }
-    }
-}
+// `StaticSecret` from x25519-dalek 2.x already derives `Zeroize` and carries
+// `#[zeroize(drop)]` (i.e. it implements `ZeroizeOnDrop`) when the crate's
+// default `zeroize` feature is active, which it is in this project.  No manual
+// `Drop` impl is needed on `DeviceIdentity`; adding one would create a second,
+// racy zeroization pass over memory that `StaticSecret` has already cleared,
+// and the original implementation additionally contained undefined behaviour
+// (casting `*const u8` obtained from a shared reference to `*mut u8` and
+// writing through it violates Rust's aliasing rules).
 
 impl DeviceIdentity {
     /// Generate a new random key pair.
@@ -87,9 +82,9 @@ impl DeviceIdentity {
         let path = config_dir.join("identity.json");
 
         if path.exists() {
-            let data = std::fs::read_to_string(&path).map_err(|e| {
+            let data = Zeroizing::new(std::fs::read_to_string(&path).map_err(|e| {
                 FluxError::EncryptionError(format!("Failed to read identity file: {}", e))
-            })?;
+            })?);
             let file: IdentityFile = serde_json::from_str(&data).map_err(|e| {
                 FluxError::EncryptionError(format!("Failed to parse identity file: {}", e))
             })?;
@@ -138,17 +133,22 @@ impl DeviceIdentity {
         let tmp_path = config_dir.join("identity.json.tmp");
 
         let file = IdentityFile {
-            secret_key: BASE64.encode(self.secret_key.as_bytes()),
+            // Wrap the base64 string in `Zeroizing` so it is overwritten when
+            // `file` is dropped.  No separate `secret_b64` variable is needed.
+            secret_key: Zeroizing::new(BASE64.encode(self.secret_key.as_bytes())),
             public_key: BASE64.encode(self.public_key.as_bytes()),
         };
 
-        let json = serde_json::to_string_pretty(&file).map_err(|e| {
+        let json = Zeroizing::new(serde_json::to_string_pretty(&file).map_err(|e| {
             FluxError::EncryptionError(format!("Failed to serialize identity: {}", e))
-        })?;
+        })?);
 
-        std::fs::write(&tmp_path, &json).map_err(|e| {
+        std::fs::write(&tmp_path, json.as_bytes()).map_err(|e| {
             FluxError::EncryptionError(format!("Failed to write identity file: {}", e))
         })?;
+
+        // Cleanup guard: remove tmp file on error to avoid leaking secrets
+        let cleanup = CleanupGuard(&tmp_path);
 
         // Set restrictive permissions on Unix (owner read/write only)
         #[cfg(unix)]
@@ -160,9 +160,54 @@ impl DeviceIdentity {
             })?;
         }
 
+        // Restrict to owner-only on Windows via icacls
+        #[cfg(windows)]
+        {
+            match std::env::var("USERNAME") {
+                Ok(username)
+                    if username
+                        .chars()
+                        .all(|c| c.is_alphanumeric() || c == '-' || c == '_' || c == '.' || c == ' ') =>
+                {
+                    let status = std::process::Command::new("icacls")
+                        .arg(tmp_path.to_string_lossy().as_ref())
+                        .args(["/inheritance:r", "/grant:r"])
+                        .arg(format!("{}:(R,W)", username))
+                        .stdout(std::process::Stdio::null())
+                        .stderr(std::process::Stdio::null())
+                        .status();
+                    match status {
+                        Ok(s) if s.success() => {}
+                        Ok(s) => tracing::warn!(
+                            "icacls returned non-zero status {} while restricting identity file permissions",
+                            s
+                        ),
+                        Err(e) => tracing::warn!(
+                            "Failed to restrict identity file permissions via icacls: {}",
+                            e
+                        ),
+                    }
+                }
+                Ok(username) => {
+                    tracing::warn!(
+                        "USERNAME contains unexpected characters ('{}'), skipping identity file permission restriction",
+                        username
+                    );
+                }
+                Err(_) => {
+                    tracing::warn!(
+                        "USERNAME environment variable not set, cannot restrict identity file permissions"
+                    );
+                }
+            }
+        }
+
         std::fs::rename(&tmp_path, &path).map_err(|e| {
             FluxError::EncryptionError(format!("Failed to save identity file: {}", e))
         })?;
+
+        // Success — disarm the cleanup guard
+        std::mem::forget(cleanup);
 
         Ok(())
     }
@@ -186,6 +231,14 @@ impl DeviceIdentity {
     /// Return a reference to the static secret key (for key exchange with peers).
     pub fn secret_key(&self) -> &StaticSecret {
         &self.secret_key
+    }
+}
+
+/// RAII guard that removes a file on drop (for temp file cleanup on error).
+struct CleanupGuard<'a>(&'a Path);
+impl<'a> Drop for CleanupGuard<'a> {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(self.0);
     }
 }
 
@@ -220,12 +273,42 @@ impl EncryptedChannel {
         let shared = secret.diffie_hellman(peer_public);
 
         // Derive symmetric key using BLAKE3 in key derivation mode with domain separation.
-        // This is the recommended way to derive keys from DH shared secrets.
         let mut derived_key = blake3::derive_key(KDF_CONTEXT, shared.as_bytes());
         let cipher = XChaCha20Poly1305::new((&derived_key).into());
 
-        // Zero the derived key material immediately after cipher creation
+        // Zero all key material immediately after cipher creation
         derived_key.zeroize();
+
+        Self { cipher }
+    }
+
+    /// Complete the key exchange with code-phrase binding (PAKE-like).
+    ///
+    /// Like `complete()`, but additionally binds the code phrase into the KDF
+    /// input. This ensures that only a party who knows the code phrase can
+    /// derive the same session key. An attacker who intercepts the DH exchange
+    /// but doesn't know the code phrase will derive a different key, causing
+    /// Poly1305 authentication to fail on the first encrypted chunk.
+    pub fn complete_with_code(
+        secret: EphemeralSecret,
+        peer_public: &PublicKey,
+        code_phrase: &str,
+    ) -> Self {
+        let shared = secret.diffie_hellman(peer_public);
+
+        // Bind both the DH shared secret and the code phrase into the KDF.
+        // This creates a cryptographic binding between the code phrase and the
+        // session key, preventing MitM attacks by parties who don't know the code.
+        let mut kdf_input = Vec::with_capacity(32 + code_phrase.len());
+        kdf_input.extend_from_slice(shared.as_bytes());
+        kdf_input.extend_from_slice(code_phrase.as_bytes());
+
+        let mut derived_key = blake3::derive_key(KDF_CONTEXT, &kdf_input);
+        let cipher = XChaCha20Poly1305::new((&derived_key).into());
+
+        // Zero all key material
+        derived_key.zeroize();
+        kdf_input.zeroize();
 
         Self { cipher }
     }
@@ -256,6 +339,15 @@ pub fn key_exchange(
     peer_public: &PublicKey,
 ) -> EncryptedChannel {
     EncryptedChannel::complete(our_secret, peer_public)
+}
+
+/// Convenience: perform code-phrase-bound key exchange (for testing).
+pub fn key_exchange_with_code(
+    our_secret: EphemeralSecret,
+    peer_public: &PublicKey,
+    code_phrase: &str,
+) -> EncryptedChannel {
+    EncryptedChannel::complete_with_code(our_secret, peer_public, code_phrase)
 }
 
 #[cfg(test)]
@@ -417,5 +509,35 @@ mod tests {
         let (ct, nonce) = channel_a.encrypt(plaintext).unwrap();
         let decrypted = channel_b.decrypt(&ct, &nonce).unwrap();
         assert_eq!(plaintext.as_slice(), decrypted.as_slice());
+    }
+
+    #[test]
+    fn complete_with_code_roundtrip() {
+        let (secret_a, public_a) = EncryptedChannel::initiate();
+        let (secret_b, public_b) = EncryptedChannel::initiate();
+        let code = "1234-ace-bad-car";
+
+        let channel_a = EncryptedChannel::complete_with_code(secret_a, &public_b, code);
+        let channel_b = EncryptedChannel::complete_with_code(secret_b, &public_a, code);
+
+        let plaintext = b"code-phrase bound encryption";
+        let (ct, nonce) = channel_a.encrypt(plaintext).unwrap();
+        let decrypted = channel_b.decrypt(&ct, &nonce).unwrap();
+        assert_eq!(plaintext.as_slice(), decrypted.as_slice());
+    }
+
+    #[test]
+    fn complete_with_code_wrong_code_fails_decrypt() {
+        let (secret_a, public_a) = EncryptedChannel::initiate();
+        let (secret_b, public_b) = EncryptedChannel::initiate();
+
+        let channel_a = EncryptedChannel::complete_with_code(secret_a, &public_b, "1234-ace-bad-car");
+        let channel_b = EncryptedChannel::complete_with_code(secret_b, &public_a, "5678-dog-elk-fig");
+
+        let plaintext = b"should fail";
+        let (ct, nonce) = channel_a.encrypt(plaintext).unwrap();
+        // Different code phrase -> different derived key -> decryption fails
+        let result = channel_b.decrypt(&ct, &nonce);
+        assert!(result.is_err());
     }
 }

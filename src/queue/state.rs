@@ -1,5 +1,7 @@
 use chrono::{DateTime, Utc};
+use fs2::FileExt;
 use serde::{Deserialize, Serialize};
+use std::fs::File;
 use std::path::{Path, PathBuf};
 
 use crate::error::FluxError;
@@ -50,18 +52,44 @@ pub struct QueueEntry {
 ///
 /// Stores transfer jobs in `queue.json` within the Flux data directory.
 /// Uses atomic writes (write to temp file, then rename) for crash safety.
+///
+/// An exclusive advisory lock on `queue.lock` is held for the entire lifetime
+/// of this struct. The lock is released automatically when the `QueueStore` is
+/// dropped, preventing concurrent modification from multiple `flux queue run`
+/// invocations.
 pub struct QueueStore {
     path: PathBuf,
     entries: Vec<QueueEntry>,
     next_id: u64,
+    /// Holds the open lock file. The `fs2` exclusive lock is tied to the file
+    /// descriptor; dropping this field releases the lock.
+    _lock_file: File,
 }
 
 impl QueueStore {
     /// Load the queue from `data_dir/queue.json`.
     ///
-    /// If the file does not exist, returns an empty queue starting at id 1.
-    /// If the file is corrupted, logs a warning and starts fresh.
+    /// Acquires an exclusive advisory lock on `data_dir/queue.lock` before
+    /// reading the state file. The lock is held until the returned `QueueStore`
+    /// is dropped. If another process already holds the lock this call blocks
+    /// until that process releases it (i.e. finishes its own load-modify-save
+    /// cycle).
+    ///
+    /// If the queue file does not exist, returns an empty queue starting at
+    /// id 1. If the file is corrupted, logs a warning and starts fresh.
     pub fn load(data_dir: &Path) -> Result<Self, FluxError> {
+        let lock_path = data_dir.join("queue.lock");
+        let lock_file = File::options()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(&lock_path)
+            .map_err(|e| FluxError::Io { source: e })?;
+        lock_file
+            .lock_exclusive()
+            .map_err(|e| FluxError::Io { source: e })?;
+
         let path = data_dir.join("queue.json");
 
         if path.exists() {
@@ -75,6 +103,7 @@ impl QueueStore {
                         path,
                         entries,
                         next_id,
+                        _lock_file: lock_file,
                     })
                 }
                 Err(e) => {
@@ -83,6 +112,7 @@ impl QueueStore {
                         path,
                         entries: Vec::new(),
                         next_id: 1,
+                        _lock_file: lock_file,
                     })
                 }
             }
@@ -91,6 +121,7 @@ impl QueueStore {
                 path,
                 entries: Vec::new(),
                 next_id: 1,
+                _lock_file: lock_file,
             })
         }
     }
