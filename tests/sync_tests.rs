@@ -2,8 +2,17 @@ use assert_cmd::Command;
 use predicates::prelude::*;
 use tempfile::TempDir;
 
+use std::io::{BufRead, BufReader};
+use std::process::Stdio;
+use std::time::Duration;
+
 fn flux() -> Command {
     Command::cargo_bin("flux").expect("flux binary not found")
+}
+
+/// Get the path to the flux binary for spawning processes.
+fn flux_bin_path() -> std::path::PathBuf {
+    assert_cmd::cargo::cargo_bin("flux")
 }
 
 /// Helper: create a file with given content inside a directory.
@@ -240,4 +249,219 @@ fn test_sync_watch_schedule_mutex() {
         .assert()
         .failure()
         .stderr(predicate::str::contains("mutually exclusive"));
+}
+
+// ---- Plan 02 integration tests ----
+
+#[test]
+fn test_sync_watch_initial_sync() {
+    // Watch mode should perform an initial sync immediately on start.
+    // We spawn the process, wait for files to appear in dest, then kill it.
+    let dir = TempDir::new().unwrap();
+    let source = dir.path().join("src");
+    let dest = dir.path().join("dst");
+    std::fs::create_dir_all(&source).unwrap();
+    std::fs::create_dir_all(&dest).unwrap();
+
+    create_file(&source, "initial.txt", "watch mode test");
+
+    let mut child = std::process::Command::new(flux_bin_path())
+        .args([
+            "sync",
+            "--watch",
+            source.to_str().unwrap(),
+            dest.to_str().unwrap(),
+        ])
+        .stderr(Stdio::piped())
+        .stdout(Stdio::null())
+        .spawn()
+        .expect("Failed to spawn flux sync --watch");
+
+    // Wait up to 5 seconds for the initial sync to complete
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    let mut synced = false;
+    while std::time::Instant::now() < deadline {
+        if dest.join("initial.txt").exists() {
+            let content = std::fs::read_to_string(dest.join("initial.txt")).unwrap_or_default();
+            if content == "watch mode test" {
+                synced = true;
+                break;
+            }
+        }
+        std::thread::sleep(Duration::from_millis(200));
+    }
+
+    // Kill the watcher process
+    let _ = child.kill();
+    let _ = child.wait();
+
+    assert!(synced, "Watch mode should perform initial sync: initial.txt should appear in dest");
+}
+
+#[test]
+fn test_sync_schedule_invalid_cron() {
+    let dir = TempDir::new().unwrap();
+    let source = dir.path().join("src");
+    let dest = dir.path().join("dst");
+    std::fs::create_dir_all(&source).unwrap();
+    std::fs::create_dir_all(&dest).unwrap();
+
+    flux()
+        .args([
+            "sync",
+            "--schedule",
+            "not valid",
+            source.to_str().unwrap(),
+            dest.to_str().unwrap(),
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("Invalid cron expression"));
+}
+
+#[test]
+fn test_sync_schedule_prints_next_time() {
+    // Schedule mode should print "Next sync at:" before waiting.
+    // Spawn and read stderr for a few seconds to verify.
+    let dir = TempDir::new().unwrap();
+    let source = dir.path().join("src");
+    let dest = dir.path().join("dst");
+    std::fs::create_dir_all(&source).unwrap();
+    std::fs::create_dir_all(&dest).unwrap();
+
+    let mut child = std::process::Command::new(flux_bin_path())
+        .args([
+            "sync",
+            "--schedule",
+            "0 0 */1 * * *",
+            source.to_str().unwrap(),
+            dest.to_str().unwrap(),
+        ])
+        .stderr(Stdio::piped())
+        .stdout(Stdio::null())
+        .spawn()
+        .expect("Failed to spawn flux sync --schedule");
+
+    let stderr = child.stderr.take().expect("Failed to capture stderr");
+    let reader = BufReader::new(stderr);
+
+    let mut found_next_sync = false;
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+
+    for line in reader.lines() {
+        if std::time::Instant::now() > deadline {
+            break;
+        }
+        if let Ok(line) = line {
+            if line.contains("Next sync at:") {
+                found_next_sync = true;
+                break;
+            }
+        }
+    }
+
+    let _ = child.kill();
+    let _ = child.wait();
+
+    assert!(found_next_sync, "Schedule mode should print 'Next sync at:' message");
+}
+
+#[test]
+fn test_sync_nested_directories() {
+    let dir = TempDir::new().unwrap();
+    let source = dir.path().join("src");
+    let dest = dir.path().join("dst");
+    std::fs::create_dir_all(&source).unwrap();
+    std::fs::create_dir_all(&dest).unwrap();
+
+    // Create deeply nested structure
+    create_file(&source, "a/b/c/deep.txt", "deep content");
+    create_file(&source, "a/sibling.txt", "sibling content");
+    create_file(&source, "top.txt", "top content");
+
+    flux()
+        .args(["sync", source.to_str().unwrap(), dest.to_str().unwrap()])
+        .assert()
+        .success();
+
+    // Verify nested structure preserved
+    assert_eq!(
+        std::fs::read_to_string(dest.join("a/b/c/deep.txt")).unwrap(),
+        "deep content"
+    );
+    assert_eq!(
+        std::fs::read_to_string(dest.join("a/sibling.txt")).unwrap(),
+        "sibling content"
+    );
+    assert_eq!(
+        std::fs::read_to_string(dest.join("top.txt")).unwrap(),
+        "top content"
+    );
+}
+
+#[test]
+fn test_sync_verify_flag() {
+    let dir = TempDir::new().unwrap();
+    let source = dir.path().join("src");
+    let dest = dir.path().join("dst");
+    std::fs::create_dir_all(&source).unwrap();
+    std::fs::create_dir_all(&dest).unwrap();
+
+    create_file(&source, "verified.txt", "verify this content");
+
+    flux()
+        .args([
+            "sync",
+            "--verify",
+            source.to_str().unwrap(),
+            dest.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    // File should be copied correctly (verify mode checks BLAKE3 hash)
+    assert_eq!(
+        std::fs::read_to_string(dest.join("verified.txt")).unwrap(),
+        "verify this content"
+    );
+}
+
+#[test]
+fn test_sync_force_empty_source_delete() {
+    let dir = TempDir::new().unwrap();
+    let source = dir.path().join("src");
+    let dest = dir.path().join("dst");
+    std::fs::create_dir_all(&source).unwrap();
+    std::fs::create_dir_all(&dest).unwrap();
+
+    create_file(&dest, "doomed.txt", "will be deleted");
+
+    // Without --force, should fail
+    flux()
+        .args([
+            "sync",
+            "--delete",
+            source.to_str().unwrap(),
+            dest.to_str().unwrap(),
+        ])
+        .assert()
+        .failure();
+
+    // File still exists
+    assert!(dest.join("doomed.txt").exists());
+
+    // With --force, should succeed and delete
+    flux()
+        .args([
+            "sync",
+            "--delete",
+            "--force",
+            source.to_str().unwrap(),
+            dest.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    // File should be deleted
+    assert!(!dest.join("doomed.txt").exists());
 }
