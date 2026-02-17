@@ -5,6 +5,8 @@
 
 pub mod dashboard;
 pub mod file_browser;
+pub mod history_view;
+pub mod queue_view;
 pub mod status_bar;
 
 use ratatui::Frame;

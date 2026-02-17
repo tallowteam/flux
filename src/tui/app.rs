@@ -5,12 +5,14 @@ use ratatui::crossterm::event::{KeyCode, KeyEvent};
 use ratatui::layout::{Constraint, Layout};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::Line;
-use ratatui::widgets::{Block, Borders, Paragraph, Tabs};
+use ratatui::widgets::{Block, Borders, Tabs};
 
 use super::action::Action;
 use super::components::Component;
 use super::components::dashboard::DashboardComponent;
 use super::components::file_browser::FileBrowserComponent;
+use super::components::history_view::HistoryViewComponent;
+use super::components::queue_view::QueueViewComponent;
 use super::components::status_bar::StatusBar;
 use super::event::{Event, EventHandler};
 use super::terminal;
@@ -87,6 +89,10 @@ pub struct App {
     dashboard: DashboardComponent,
     /// File browser tab component.
     file_browser: FileBrowserComponent,
+    /// Queue management tab component.
+    queue_view: QueueViewComponent,
+    /// Transfer history tab component.
+    history_view: HistoryViewComponent,
 }
 
 impl App {
@@ -101,6 +107,8 @@ impl App {
             status_bar: StatusBar::new(),
             dashboard,
             file_browser: FileBrowserComponent::new(),
+            queue_view: QueueViewComponent::new(),
+            history_view: HistoryViewComponent::new(),
         }
     }
 
@@ -144,7 +152,8 @@ impl App {
                 match self.active_tab {
                     ActiveTab::Dashboard => self.dashboard.handle_key_event(key),
                     ActiveTab::FileBrowser => self.file_browser.handle_key_event(key),
-                    _ => Action::Noop,
+                    ActiveTab::Queue => self.queue_view.handle_key_event(key),
+                    ActiveTab::History => self.history_view.handle_key_event(key),
                 }
             }
         }
@@ -153,6 +162,8 @@ impl App {
     /// Called on each tick event for periodic state updates.
     pub fn on_tick(&mut self) {
         self.dashboard.update();
+        self.queue_view.update();
+        self.history_view.update();
     }
 
     /// Render the entire application UI.
@@ -197,26 +208,43 @@ impl App {
             ActiveTab::FileBrowser => {
                 self.file_browser.render(frame, chunks[1]);
             }
-            _ => {
-                let content_title = format!(" {} ", self.active_tab.name());
-                let content_text = match self.active_tab {
-                    ActiveTab::Queue => "Transfer queue will appear here.",
-                    ActiveTab::History => "Transfer history will appear here.",
-                    _ => unreachable!(),
-                };
-                let content = Paragraph::new(content_text)
-                    .block(
-                        Block::default()
-                            .borders(Borders::ALL)
-                            .title(content_title),
-                    )
-                    .style(Style::default().fg(Color::White));
-                frame.render_widget(content, chunks[1]);
+            ActiveTab::Queue => {
+                self.queue_view.render(frame, chunks[1]);
+            }
+            ActiveTab::History => {
+                self.history_view.render(frame, chunks[1]);
             }
         }
 
-        // -- Status bar --
-        self.status_bar.render(frame, chunks[2]);
+        // -- Status bar with tab-appropriate hints --
+        let mut status_bar = StatusBar::new();
+        status_bar.hints = match self.active_tab {
+            ActiveTab::Dashboard => vec![
+                ("j/k".into(), "Navigate".into()),
+                ("1-4".into(), "Tabs".into()),
+                ("q".into(), "Quit".into()),
+            ],
+            ActiveTab::FileBrowser => vec![
+                ("j/k".into(), "Navigate".into()),
+                ("Enter".into(), "Open".into()),
+                ("Bksp".into(), "Parent".into()),
+                ("q".into(), "Quit".into()),
+            ],
+            ActiveTab::Queue => vec![
+                ("j/k".into(), "Navigate".into()),
+                ("p".into(), "Pause".into()),
+                ("r".into(), "Resume".into()),
+                ("c".into(), "Cancel".into()),
+                ("x".into(), "Clear".into()),
+                ("q".into(), "Quit".into()),
+            ],
+            ActiveTab::History => vec![
+                ("j/k".into(), "Navigate".into()),
+                ("1-4".into(), "Tabs".into()),
+                ("q".into(), "Quit".into()),
+            ],
+        };
+        status_bar.render(frame, chunks[2]);
     }
 }
 
