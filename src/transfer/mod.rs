@@ -14,6 +14,7 @@ use walkdir::WalkDir;
 
 use crate::backend::create_backend;
 use crate::cli::args::CpArgs;
+use crate::config;
 use crate::error::FluxError;
 use crate::progress::bar::{create_directory_progress, create_file_progress};
 use crate::protocol::detect_protocol;
@@ -62,12 +63,23 @@ impl TransferResult {
 /// source and destination strings -- network protocols return stub errors
 /// until Phase 3 Plans 02-04 implement them.
 pub fn execute_copy(args: CpArgs, quiet: bool) -> Result<(), FluxError> {
-    // Detect protocols from source and destination strings
-    let src_protocol = detect_protocol(&args.source);
-    let dst_protocol = detect_protocol(&args.dest);
+    // Resolve aliases before protocol detection
+    let alias_store = match config::paths::flux_config_dir() {
+        Ok(dir) => config::aliases::AliasStore::load(&dir).unwrap_or_default(),
+        Err(_) => config::aliases::AliasStore::default(),
+    };
+    let source_str = config::aliases::resolve_alias(&args.source, &alias_store);
+    let dest_str = config::aliases::resolve_alias(&args.dest, &alias_store);
 
-    tracing::debug!("Source protocol: {} ({})", src_protocol.name(), args.source);
-    tracing::debug!("Dest protocol: {} ({})", dst_protocol.name(), args.dest);
+    tracing::debug!("Alias resolution: {} -> {}", args.source, source_str);
+    tracing::debug!("Alias resolution: {} -> {}", args.dest, dest_str);
+
+    // Detect protocols from resolved source and destination strings
+    let src_protocol = detect_protocol(&source_str);
+    let dst_protocol = detect_protocol(&dest_str);
+
+    tracing::debug!("Source protocol: {} ({})", src_protocol.name(), source_str);
+    tracing::debug!("Dest protocol: {} ({})", dst_protocol.name(), dest_str);
 
     // For non-local protocols, validate the backend is available (will error with stub message)
     if !src_protocol.is_local() {
@@ -83,11 +95,11 @@ pub fn execute_copy(args: CpArgs, quiet: bool) -> Result<(), FluxError> {
     let source = src_protocol
         .local_path()
         .cloned()
-        .unwrap_or_else(|| PathBuf::from(&args.source));
+        .unwrap_or_else(|| PathBuf::from(&source_str));
     let dest = dst_protocol
         .local_path()
         .cloned()
-        .unwrap_or_else(|| PathBuf::from(&args.dest));
+        .unwrap_or_else(|| PathBuf::from(&dest_str));
     let source = &source;
     let dest = &dest;
 

@@ -19,6 +19,12 @@ pub struct Cli {
 pub enum Commands {
     /// Copy files or directories
     Cp(CpArgs),
+
+    /// Save a path alias (e.g., flux add nas \\\\server\\share)
+    Add(AddArgs),
+
+    /// Manage path aliases
+    Alias(AliasArgs),
 }
 
 #[derive(clap::Args, Debug)]
@@ -60,4 +66,35 @@ pub struct CpArgs {
     /// Resume interrupted transfer
     #[arg(long)]
     pub resume: bool,
+}
+
+/// Arguments for the `flux add` command.
+#[derive(clap::Args, Debug)]
+pub struct AddArgs {
+    /// Name for the alias (e.g., nas, backup, server)
+    pub name: String,
+
+    /// Path or URI to associate (e.g., \\\\server\\share, sftp://host/path)
+    pub path: String,
+}
+
+/// Arguments for the `flux alias` command.
+#[derive(clap::Args, Debug)]
+pub struct AliasArgs {
+    #[command(subcommand)]
+    pub action: Option<AliasAction>,
+}
+
+/// Subcommands for alias management.
+#[derive(Subcommand, Debug)]
+pub enum AliasAction {
+    /// Remove a saved alias
+    Rm(AliasRmArgs),
+}
+
+/// Arguments for `flux alias rm`.
+#[derive(clap::Args, Debug)]
+pub struct AliasRmArgs {
+    /// Name of alias to remove
+    pub name: String,
 }

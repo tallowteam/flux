@@ -57,6 +57,42 @@ fn run(cli: Cli) -> Result<(), FluxError> {
             transfer::execute_copy(args, cli.quiet)?;
             Ok(())
         }
+        Commands::Add(args) => {
+            let config_dir = config::paths::flux_config_dir()?;
+            config::aliases::validate_alias_name(&args.name)?;
+            let mut store = config::aliases::AliasStore::load(&config_dir)?;
+            store.add(args.name.clone(), args.path.clone());
+            store.save()?;
+            eprintln!("Alias saved: {} -> {}", args.name, args.path);
+            Ok(())
+        }
+        Commands::Alias(args) => {
+            let config_dir = config::paths::flux_config_dir()?;
+            let mut store = config::aliases::AliasStore::load(&config_dir)?;
+
+            match args.action {
+                None => {
+                    // List all aliases
+                    let aliases = store.list();
+                    if aliases.is_empty() {
+                        println!("(no aliases saved)");
+                    } else {
+                        for (name, path) in aliases {
+                            println!("{} -> {}", name, path);
+                        }
+                    }
+                }
+                Some(cli::args::AliasAction::Rm(rm_args)) => {
+                    if store.remove(&rm_args.name) {
+                        store.save()?;
+                        eprintln!("Alias removed: {}", rm_args.name);
+                    } else {
+                        eprintln!("Alias not found: {}", rm_args.name);
+                    }
+                }
+            }
+            Ok(())
+        }
     }
 }
 
