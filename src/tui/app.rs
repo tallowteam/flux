@@ -9,6 +9,7 @@ use ratatui::widgets::{Block, Borders, Paragraph, Tabs};
 
 use super::action::Action;
 use super::components::Component;
+use super::components::dashboard::DashboardComponent;
 use super::components::status_bar::StatusBar;
 use super::event::{Event, EventHandler};
 use super::terminal;
@@ -81,15 +82,21 @@ pub struct App {
     should_quit: bool,
     /// Bottom status bar showing key hints.
     status_bar: StatusBar,
+    /// Dashboard tab component.
+    dashboard: DashboardComponent,
 }
 
 impl App {
     /// Create a new App with default state.
     pub fn new() -> Self {
+        let mut dashboard = DashboardComponent::new();
+        dashboard.set_mock_data();
+
         Self {
             active_tab: ActiveTab::Dashboard,
             should_quit: false,
             status_bar: StatusBar::new(),
+            dashboard,
         }
     }
 
@@ -129,15 +136,18 @@ impl App {
                 Action::Noop
             }
             _ => {
-                // Delegate to active tab component (placeholder for now)
-                Action::Noop
+                // Delegate to active tab component
+                match self.active_tab {
+                    ActiveTab::Dashboard => self.dashboard.handle_key_event(key),
+                    _ => Action::Noop,
+                }
             }
         }
     }
 
     /// Called on each tick event for periodic state updates.
     pub fn on_tick(&mut self) {
-        // Placeholder: future phases will poll transfers, refresh data, etc.
+        self.dashboard.update();
     }
 
     /// Render the entire application UI.
@@ -174,23 +184,29 @@ impl App {
             );
         frame.render_widget(tabs, chunks[0]);
 
-        // -- Active tab content (placeholder) --
-        let content_title = format!(" {} ", self.active_tab.name());
-        let content_text = match self.active_tab {
-            ActiveTab::Dashboard => "Active transfers will appear here.",
-            ActiveTab::FileBrowser => "File browser will appear here.",
-            ActiveTab::Queue => "Transfer queue will appear here.",
-            ActiveTab::History => "Transfer history will appear here.",
-        };
-
-        let content = Paragraph::new(content_text)
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .title(content_title),
-            )
-            .style(Style::default().fg(Color::White));
-        frame.render_widget(content, chunks[1]);
+        // -- Active tab content --
+        match self.active_tab {
+            ActiveTab::Dashboard => {
+                self.dashboard.render(frame, chunks[1]);
+            }
+            _ => {
+                let content_title = format!(" {} ", self.active_tab.name());
+                let content_text = match self.active_tab {
+                    ActiveTab::FileBrowser => "File browser will appear here.",
+                    ActiveTab::Queue => "Transfer queue will appear here.",
+                    ActiveTab::History => "Transfer history will appear here.",
+                    _ => unreachable!(),
+                };
+                let content = Paragraph::new(content_text)
+                    .block(
+                        Block::default()
+                            .borders(Borders::ALL)
+                            .title(content_title),
+                    )
+                    .style(Style::default().fg(Color::White));
+                frame.render_widget(content, chunks[1]);
+            }
+        }
 
         // -- Status bar --
         self.status_bar.render(frame, chunks[2]);

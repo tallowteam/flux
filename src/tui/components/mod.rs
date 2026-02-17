@@ -3,6 +3,7 @@
 //! Each tab view implements the `Component` trait, providing
 //! key event handling, state updates, and rendering.
 
+pub mod dashboard;
 pub mod status_bar;
 
 use ratatui::Frame;
