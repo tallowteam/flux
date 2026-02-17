@@ -5,23 +5,23 @@
 See: .planning/PROJECT.md (updated 2026-02-16)
 
 **Core value:** Transfer files at maximum network speed with zero friction
-**Current focus:** Phase 5 - Discovery & Security
+**Current focus:** Phase 6 - TUI Mode
 
 ## Current Position
 
-Phase: 5 of 7 (Discovery & Security) -- COMPLETE
-Plan: 3 of 3 in current phase
-Status: Phase Complete
-Last activity: 2026-02-17 -- Completed 05-03-PLAN.md (Send/Receive protocol + CLI integration)
+Phase: 6 of 7 (TUI Mode)
+Plan: 1 of 4 in current phase
+Status: In Progress
+Last activity: 2026-02-17 -- Completed 06-01-PLAN.md (TUI Foundation with ratatui)
 
-Progress: [########################] 76%
+Progress: [##########################] 81%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 17
+- Total plans completed: 18
 - Average duration: 14min
-- Total execution time: 4.0 hours
+- Total execution time: 4.2 hours
 
 **By Phase:**
 
@@ -32,10 +32,11 @@ Progress: [########################] 76%
 | 03-network-protocols | 4/4 | 55min | 14min |
 | 04-user-experience | 4/4 | 21min | 5min |
 | 05-discovery-security | 3/3 | 61min | 20min |
+| 06-tui-mode | 1/4 | 9min | 9min |
 
 **Recent Trend:**
-- Last 5 plans: 04-03 (4min), 04-04 (5min), 05-01 (25min), 05-02 (29min), 05-03 (7min)
-- Trend: Phase 5 Plan 03 fast (7min) -- integration plan wiring existing modules, no new deps to compile
+- Last 5 plans: 04-04 (5min), 05-01 (25min), 05-02 (29min), 05-03 (7min), 06-01 (9min)
+- Trend: Phase 6 Plan 01 moderate (9min) -- new ratatui dep compilation + full TUI module structure
 
 *Updated after each plan completion*
 
@@ -128,6 +129,11 @@ Recent decisions affecting current work:
 - [05-03] find_unique_path for auto-rename on receiver (file_1.txt pattern)
 - [05-03] Default trust action is 'list' (matches alias/queue pattern)
 - [05-03] gethostname() as default device name for send/receive
+- [06-01] crossterm 0.29 (not 0.28) to match ratatui 0.30 bundled version
+- [06-01] launch_tui() creates own tokio Runtime since main() is sync
+- [06-01] 20fps render (50ms) and 4Hz tick (250ms) for responsive UI without CPU waste
+- [06-01] Component trait with handle_key_event/update/render matching ratatui community patterns
+- [06-01] ActiveTab enum with const ALL array for cycling with wrap-around
 
 ### Pending Todos
 
@@ -140,8 +146,8 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-02-17
-Stopped at: Completed 05-03-PLAN.md (Send/Receive protocol + CLI integration -- 274 unit + 77 integration = 351 tests passing, 19 new tests)
-Resume file: .planning/phases/05-discovery-security/05-03-SUMMARY.md
+Stopped at: Completed 06-01-PLAN.md (TUI Foundation -- ratatui 0.30, async event loop, Component architecture, 4-tab navigation, 360 tests passing)
+Resume file: .planning/phases/06-tui-mode/06-01-SUMMARY.md
 
 ---
 *State initialized: 2026-02-16*
