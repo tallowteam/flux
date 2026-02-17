@@ -13,7 +13,17 @@ use crate::error::FluxError;
 ///
 /// Returns the platform-specific config directory with a `flux` subdirectory.
 /// Creates the directory if it does not exist.
+///
+/// If the `FLUX_CONFIG_DIR` environment variable is set, it overrides the
+/// default location. This enables test isolation and custom deployments.
 pub fn flux_config_dir() -> Result<PathBuf, FluxError> {
+    if let Ok(override_dir) = std::env::var("FLUX_CONFIG_DIR") {
+        let dir = PathBuf::from(override_dir);
+        if !dir.exists() {
+            std::fs::create_dir_all(&dir)?;
+        }
+        return Ok(dir);
+    }
     let base = dirs::config_dir()
         .ok_or_else(|| FluxError::Config("Could not determine config directory".into()))?;
     let flux_dir = base.join("flux");
@@ -27,7 +37,17 @@ pub fn flux_config_dir() -> Result<PathBuf, FluxError> {
 ///
 /// Returns the platform-specific data directory with a `flux` subdirectory.
 /// Used for data files like queue state and transfer history.
+///
+/// If the `FLUX_DATA_DIR` environment variable is set, it overrides the
+/// default location. This enables test isolation and custom deployments.
 pub fn flux_data_dir() -> Result<PathBuf, FluxError> {
+    if let Ok(override_dir) = std::env::var("FLUX_DATA_DIR") {
+        let dir = PathBuf::from(override_dir);
+        if !dir.exists() {
+            std::fs::create_dir_all(&dir)?;
+        }
+        return Ok(dir);
+    }
     let base = dirs::data_dir()
         .ok_or_else(|| FluxError::Config("Could not determine data directory".into()))?;
     let flux_dir = base.join("flux");

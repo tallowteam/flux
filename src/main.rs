@@ -10,10 +10,11 @@ mod protocol;
 mod queue;
 mod transfer;
 
-use cli::args::{Cli, CpArgs, Commands, QueueAction};
+use cli::args::{Cli, Commands, CpArgs, QueueAction};
 use config::types::Verbosity;
 use error::FluxError;
 use queue::state::QueueStatus;
+use bytesize::ByteSize;
 
 fn main() {
     let cli = Cli::parse();
@@ -215,6 +216,55 @@ fn run(cli: Cli) -> Result<(), FluxError> {
             }
             Ok(())
         }
+        Commands::History(args) => {
+            let data_dir = config::paths::flux_data_dir()?;
+            let flux_config = config::types::load_config().unwrap_or_default();
+            let mut store =
+                queue::history::HistoryStore::load(&data_dir, flux_config.history_limit)?;
+
+            if args.clear {
+                store.clear();
+                store.save()?;
+                eprintln!("History cleared");
+                return Ok(());
+            }
+
+            let entries = store.list();
+            if entries.is_empty() {
+                eprintln!("No transfer history");
+                return Ok(());
+            }
+
+            // Show most recent N entries
+            let start = if entries.len() > args.count {
+                entries.len() - args.count
+            } else {
+                0
+            };
+            println!(
+                "{:<20} {:<10} {:<30} {:<30} {:<10}",
+                "TIMESTAMP", "STATUS", "SOURCE", "DEST", "SIZE"
+            );
+            println!("{}", "-".repeat(102));
+            for entry in &entries[start..] {
+                let ts = entry.timestamp.format("%Y-%m-%d %H:%M:%S").to_string();
+                let size = format_bytes(entry.bytes);
+                let source = truncate_str(&entry.source, 28);
+                let dest = truncate_str(&entry.dest, 28);
+                println!(
+                    "{:<20} {:<10} {:<30} {:<30} {:<10}",
+                    ts, entry.status, source, dest, size
+                );
+            }
+            Ok(())
+        }
+        Commands::Completions(args) => {
+            use clap::CommandFactory;
+            use clap_complete::generate;
+            let mut cmd = Cli::command();
+            generate(args.shell, &mut cmd, "flux", &mut std::io::stdout());
+            Ok(())
+        }
     }
 }
 
@@ -225,6 +275,11 @@ fn truncate_str(s: &str, max: usize) -> String {
     } else {
         format!("{}...", &s[..max.saturating_sub(3)])
     }
+}
+
+/// Format bytes as human-readable string using bytesize crate.
+fn format_bytes(bytes: u64) -> String {
+    ByteSize(bytes).to_string()
 }
 
 /// Display a FluxError with optional suggestion hint to stderr.

@@ -30,6 +30,12 @@ pub enum Commands {
 
     /// Manage transfer queue
     Queue(QueueArgs),
+
+    /// View transfer history
+    History(HistoryArgs),
+
+    /// Generate shell completions
+    Completions(CompletionsArgs),
 }
 
 #[derive(clap::Args, Debug)]
@@ -165,4 +171,23 @@ pub struct QueueAddArgs {
 pub struct QueueIdArgs {
     /// Transfer ID
     pub id: u64,
+}
+
+/// Arguments for the `flux history` command.
+#[derive(clap::Args, Debug)]
+pub struct HistoryArgs {
+    /// Maximum number of entries to show
+    #[arg(short = 'n', long, default_value = "20")]
+    pub count: usize,
+    /// Clear all history
+    #[arg(long)]
+    pub clear: bool,
+}
+
+/// Arguments for the `flux completions` command.
+#[derive(clap::Args, Debug)]
+pub struct CompletionsArgs {
+    /// Shell to generate completions for
+    #[arg(value_enum)]
+    pub shell: clap_complete::Shell,
 }

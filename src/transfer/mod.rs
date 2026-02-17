@@ -69,6 +69,9 @@ impl TransferResult {
 /// Config is loaded lazily here (only when transfer commands need it).
 /// CLI flags override config.toml values.
 pub fn execute_copy(args: CpArgs, quiet: bool) -> Result<(), FluxError> {
+    // Track start time for history recording
+    let start_time = std::time::Instant::now();
+
     // Load config (graceful -- use defaults on error)
     let flux_config = config::types::load_config().unwrap_or_default();
 
@@ -398,6 +401,17 @@ pub fn execute_copy(args: CpArgs, quiet: bool) -> Result<(), FluxError> {
             }
         }
 
+        // Record in history (best-effort, don't fail the transfer on history error)
+        record_history(
+            &source_str,
+            &dest_str,
+            source_meta.len(),
+            1,
+            start_time.elapsed().as_secs_f64(),
+            "completed",
+            None,
+        );
+
         Ok(())
     } else if source_meta.is_dir() {
         // --- Dry-run mode for directory ---
@@ -427,6 +441,17 @@ pub fn execute_copy(args: CpArgs, quiet: bool) -> Result<(), FluxError> {
         );
 
         if !result.errors.is_empty() {
+            // Record partial success in history
+            record_history(
+                &source_str,
+                &dest_str,
+                result.bytes_copied,
+                result.files_copied,
+                start_time.elapsed().as_secs_f64(),
+                "failed",
+                Some(format!("{} file(s) failed to copy", result.errors.len())),
+            );
+
             // Report errors to stderr
             if !quiet {
                 eprintln!(
@@ -448,6 +473,17 @@ pub fn execute_copy(args: CpArgs, quiet: bool) -> Result<(), FluxError> {
                 ),
             });
         }
+
+        // Record in history (best-effort)
+        record_history(
+            &source_str,
+            &dest_str,
+            result.bytes_copied,
+            result.files_copied,
+            start_time.elapsed().as_secs_f64(),
+            "completed",
+            None,
+        );
 
         Ok(())
     } else {
@@ -824,6 +860,39 @@ fn copy_with_failure_handling(
                     Err(e)
                 }
             }
+        }
+    }
+}
+
+/// Record a transfer in history (best-effort; errors are silently ignored).
+///
+/// This ensures that transfer failures don't compound with history write failures.
+/// Dry-run operations should NOT call this function.
+fn record_history(
+    source: &str,
+    dest: &str,
+    bytes: u64,
+    files: u64,
+    duration_secs: f64,
+    status: &str,
+    error: Option<String>,
+) {
+    use crate::queue::history::{HistoryEntry, HistoryStore};
+
+    if let Ok(data_dir) = config::paths::flux_data_dir() {
+        let flux_config = config::types::load_config().unwrap_or_default();
+        if let Ok(mut history) = HistoryStore::load(&data_dir, flux_config.history_limit) {
+            let entry = HistoryEntry {
+                source: source.to_string(),
+                dest: dest.to_string(),
+                bytes,
+                files,
+                duration_secs,
+                timestamp: chrono::Utc::now(),
+                status: status.to_string(),
+                error,
+            };
+            let _ = history.append(entry); // Ignore history write errors
         }
     }
 }
