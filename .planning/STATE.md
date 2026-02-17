@@ -5,23 +5,23 @@
 See: .planning/PROJECT.md (updated 2026-02-16)
 
 **Core value:** Transfer files at maximum network speed with zero friction
-**Current focus:** Phase 6 - TUI Mode
+**Current focus:** Phase 7 - Sync Mode
 
 ## Current Position
 
-Phase: 6 of 7 (TUI Mode)
-Plan: 4 of 4 in current phase
-Status: Phase Complete
-Last activity: 2026-02-17 -- Completed 06-04-PLAN.md (Queue View + History View)
+Phase: 7 of 7 (Sync Mode)
+Plan: 1 of 2 in current phase
+Status: In Progress
+Last activity: 2026-02-17 -- Completed 07-01-PLAN.md (Sync Engine Core)
 
-Progress: [##############################] 95%
+Progress: [##############################] 96%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 21
+- Total plans completed: 22
 - Average duration: 13min
-- Total execution time: 4.5 hours
+- Total execution time: 4.6 hours
 
 **By Phase:**
 
@@ -33,10 +33,11 @@ Progress: [##############################] 95%
 | 04-user-experience | 4/4 | 21min | 5min |
 | 05-discovery-security | 3/3 | 61min | 20min |
 | 06-tui-mode | 4/4 | 25min | 6min |
+| 07-sync-mode | 1/2 | 7min | 7min |
 
 **Recent Trend:**
-- Last 5 plans: 05-03 (7min), 06-01 (9min), 06-02 (4min), 06-03 (5min), 06-04 (7min)
-- Trend: Phase 6 Plans 02-04 fast (4-7min each) -- building on established Component trait pattern
+- Last 5 plans: 06-01 (9min), 06-02 (4min), 06-03 (5min), 06-04 (7min), 07-01 (7min)
+- Trend: Consistent 5-9min per plan across TUI and sync phases
 
 *Updated after each plan completion*
 
@@ -143,6 +144,11 @@ Recent decisions affecting current work:
 - [06-04] Status message TTL pattern (12 ticks success, 20 ticks error)
 - [06-04] with_data_dir test constructor pattern avoids env var races in parallel tests
 - [06-04] Tab-specific status bar hints recreated in render() per active tab
+- [07-01] 2-second mtime tolerance for cross-filesystem sync (FAT32 compatibility)
+- [07-01] Diff-then-execute pattern: compute_sync_plan produces SyncPlan, execute_sync_plan applies it
+- [07-01] Empty source + --delete refuses without --force (safety guard against accidental deletion)
+- [07-01] Orphan detection respects TransferFilter (excluded files not treated as orphans)
+- [07-01] follow_links(false) for walkdir to avoid infinite loops from symlinks
 
 ### Pending Todos
 
@@ -155,8 +161,8 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-02-17
-Stopped at: Completed 06-02, 06-03, 06-04 PLAN.md (Phase 6 complete -- Dashboard, FileBrowser, QueueView, HistoryView all functional)
-Resume file: .planning/phases/06-tui-mode/06-04-SUMMARY.md
+Stopped at: Completed 07-01-PLAN.md (Sync Engine Core -- diff-then-execute sync with dry-run, --delete, --exclude/--include)
+Resume file: .planning/phases/07-sync-mode/07-01-SUMMARY.md
 
 ---
 *State initialized: 2026-02-16*
