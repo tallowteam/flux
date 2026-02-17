@@ -4,10 +4,12 @@ use tracing_subscriber::EnvFilter;
 mod backend;
 mod cli;
 mod config;
+mod discovery;
 mod error;
 mod progress;
 mod protocol;
 mod queue;
+mod security;
 mod transfer;
 
 use cli::args::{Cli, Commands, CpArgs, QueueAction};
