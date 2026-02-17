@@ -36,6 +36,18 @@ pub enum Commands {
 
     /// Generate shell completions
     Completions(CompletionsArgs),
+
+    /// Discover Flux devices on the local network
+    Discover(DiscoverArgs),
+
+    /// Send a file to another Flux device
+    Send(SendArgs),
+
+    /// Receive files from other Flux devices
+    Receive(ReceiveArgs),
+
+    /// Manage trusted devices
+    Trust(TrustArgs),
 }
 
 #[derive(clap::Args, Debug)]
@@ -190,4 +202,73 @@ pub struct CompletionsArgs {
     /// Shell to generate completions for
     #[arg(value_enum)]
     pub shell: clap_complete::Shell,
+}
+
+/// Arguments for the `flux discover` command.
+#[derive(clap::Args, Debug)]
+pub struct DiscoverArgs {
+    /// Discovery timeout in seconds
+    #[arg(short, long, default_value = "5")]
+    pub timeout: u64,
+}
+
+/// Arguments for the `flux send` command.
+#[derive(clap::Args, Debug)]
+pub struct SendArgs {
+    /// File to send
+    pub file: String,
+
+    /// Target device (@devicename, host:port, or IP)
+    pub target: String,
+
+    /// Enable end-to-end encryption
+    #[arg(long)]
+    pub encrypt: bool,
+
+    /// Device name to identify as
+    #[arg(long)]
+    pub name: Option<String>,
+}
+
+/// Arguments for the `flux receive` command.
+#[derive(clap::Args, Debug)]
+pub struct ReceiveArgs {
+    /// Directory to save received files (default: current directory)
+    #[arg(short, long, default_value = ".")]
+    pub output: String,
+
+    /// Port to listen on
+    #[arg(short, long, default_value = "9741")]
+    pub port: u16,
+
+    /// Enable end-to-end encryption (require encrypted connections)
+    #[arg(long)]
+    pub encrypt: bool,
+
+    /// Device name to advertise
+    #[arg(long)]
+    pub name: Option<String>,
+}
+
+/// Arguments for the `flux trust` command.
+#[derive(clap::Args, Debug)]
+pub struct TrustArgs {
+    #[command(subcommand)]
+    pub action: Option<TrustAction>,
+}
+
+/// Subcommands for trust management.
+#[derive(Subcommand, Debug)]
+pub enum TrustAction {
+    /// List trusted devices
+    List,
+    /// Remove a trusted device
+    Rm(TrustRmArgs),
+}
+
+/// Arguments for `flux trust rm`.
+#[derive(clap::Args, Debug)]
+pub struct TrustRmArgs {
+    /// Device name to remove from trust store
+    pub name: String,
 }

@@ -13,11 +13,13 @@ mod queue;
 mod security;
 mod transfer;
 
-use cli::args::{Cli, Commands, CpArgs, QueueAction};
+use cli::args::{Cli, Commands, CpArgs, QueueAction, TrustAction};
 use config::types::Verbosity;
 use error::FluxError;
 use queue::state::QueueStatus;
 use bytesize::ByteSize;
+
+use std::path::Path;
 
 fn main() {
     let cli = Cli::parse();
@@ -266,6 +268,107 @@ fn run(cli: Cli) -> Result<(), FluxError> {
             use clap_complete::generate;
             let mut cmd = Cli::command();
             generate(args.shell, &mut cmd, "flux", &mut std::io::stdout());
+            Ok(())
+        }
+        Commands::Discover(args) => {
+            let devices = discovery::mdns::discover_flux_devices(args.timeout)?;
+            if devices.is_empty() {
+                eprintln!("No Flux devices found on the local network");
+            } else {
+                println!(
+                    "{:<20} {:<20} {:<6} {:<10}",
+                    "NAME", "HOST", "PORT", "VERSION"
+                );
+                println!("{}", "-".repeat(58));
+                for device in &devices {
+                    let version = device.version.as_deref().unwrap_or("?");
+                    println!(
+                        "{:<20} {:<20} {:<6} {:<10}",
+                        truncate_str(&device.name, 18),
+                        truncate_str(&device.host, 18),
+                        device.port,
+                        version
+                    );
+                }
+                eprintln!("Found {} device(s)", devices.len());
+            }
+            Ok(())
+        }
+        Commands::Send(args) => {
+            let file_path = Path::new(&args.file);
+            if !file_path.exists() {
+                return Err(FluxError::SourceNotFound {
+                    path: file_path.to_path_buf(),
+                });
+            }
+
+            let device_name = args.name.unwrap_or_else(|| {
+                gethostname::gethostname().to_string_lossy().to_string()
+            });
+
+            net::sender::send_file_sync(&args.target, file_path, args.encrypt, &device_name)?;
+            Ok(())
+        }
+        Commands::Receive(args) => {
+            let device_name = args.name.unwrap_or_else(|| {
+                gethostname::gethostname().to_string_lossy().to_string()
+            });
+
+            let output_dir = Path::new(&args.output);
+            if !output_dir.exists() {
+                std::fs::create_dir_all(output_dir)?;
+            }
+
+            net::receiver::start_receiver_sync(
+                args.port,
+                output_dir,
+                args.encrypt,
+                &device_name,
+            )?;
+            Ok(())
+        }
+        Commands::Trust(args) => {
+            let config_dir = config::paths::flux_config_dir()?;
+            let mut store = security::trust::TrustStore::load(&config_dir)?;
+
+            match args.action.unwrap_or(TrustAction::List) {
+                TrustAction::List => {
+                    let devices = store.list_devices();
+                    if devices.is_empty() {
+                        eprintln!("No trusted devices");
+                    } else {
+                        println!(
+                            "{:<20} {:<20} {:<20} {:<20}",
+                            "NAME", "FINGERPRINT", "FIRST SEEN", "LAST SEEN"
+                        );
+                        println!("{}", "-".repeat(82));
+                        for (name, device) in &devices {
+                            let fingerprint = if device.public_key.len() > 16 {
+                                format!("{}...", &device.public_key[..16])
+                            } else {
+                                device.public_key.clone()
+                            };
+                            let first = device.first_seen.format("%Y-%m-%d %H:%M").to_string();
+                            let last = device.last_seen.format("%Y-%m-%d %H:%M").to_string();
+                            println!(
+                                "{:<20} {:<20} {:<20} {:<20}",
+                                truncate_str(name, 18),
+                                fingerprint,
+                                first,
+                                last
+                            );
+                        }
+                    }
+                }
+                TrustAction::Rm(rm_args) => {
+                    if store.remove_device(&rm_args.name) {
+                        store.save()?;
+                        eprintln!("Removed trusted device: {}", rm_args.name);
+                    } else {
+                        eprintln!("Device not found: {}", rm_args.name);
+                    }
+                }
+            }
             Ok(())
         }
     }
