@@ -5,23 +5,23 @@
 See: .planning/PROJECT.md (updated 2026-02-16)
 
 **Core value:** Transfer files at maximum network speed with zero friction
-**Current focus:** Phase 3 - Network Protocols
+**Current focus:** Phase 4 - User Experience
 
 ## Current Position
 
-Phase: 3 of 7 (Network Protocols)
-Plan: 4 of 4 in current phase
+Phase: 4 of 7 (User Experience)
+Plan: 1 of 4 in current phase
 Status: In Progress
-Last activity: 2026-02-17 -- Completed 03-02-PLAN.md (SFTP backend)
+Last activity: 2026-02-17 -- Completed 04-01-PLAN.md (Path alias system)
 
-Progress: [##########] 43%
+Progress: [###########] 48%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 10
-- Average duration: 15min
-- Total execution time: 2.6 hours
+- Total plans completed: 11
+- Average duration: 14min
+- Total execution time: 2.7 hours
 
 **By Phase:**
 
@@ -30,10 +30,11 @@ Progress: [##########] 43%
 | 01-foundation | 3/3 | 73min | 24min |
 | 02-performance | 3/3 | 22min | 7min |
 | 03-network-protocols | 4/4 | 55min | 14min |
+| 04-user-experience | 1/4 | 6min | 6min |
 
 **Recent Trend:**
-- Last 5 plans: 02-03 (7min), 03-01 (7min), 03-04 (12min), 03-03 (12min), 03-02 (24min)
-- Trend: SFTP took 24min due to Strawberry Perl installation for vendored-openssl build
+- Last 5 plans: 03-01 (7min), 03-04 (12min), 03-03 (12min), 03-02 (24min), 04-01 (6min)
+- Trend: Path alias plan fast at 6min (no complex dependencies)
 
 *Updated after each plan completion*
 
@@ -87,6 +88,12 @@ Recent decisions affecting current work:
 - [03-02] SSH auth cascade: agent > key files (ed25519, rsa, ecdsa) > password > prompt
 - [03-02] get_current_username via env vars (USERNAME/USER) instead of whoami crate
 - [03-02] sftp_err converts ssh2::Error to FluxError::Io via Into<io::Error> trait
+- [04-01] Alias resolution runs BEFORE detect_protocol in execute_copy, not inside parser
+- [04-01] AliasStore::default() provides graceful degradation when config dir unavailable
+- [04-01] Aliases stored in separate aliases.toml (not config.toml) for independent editing
+- [04-01] Atomic writes via temp file + rename for crash safety on alias save
+- [04-01] Single-char alias names rejected to prevent drive letter collision (C:)
+- [04-01] Reserved URL scheme names (sftp, ssh, smb, etc.) rejected at add time
 
 ### Pending Todos
 
@@ -99,8 +106,8 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-02-17
-Stopped at: Completed 03-02-PLAN.md (SFTP backend with ssh2, 201 tests passing, Phase 3 all 4 plans done)
-Resume file: .planning/phases/03-network-protocols/03-02-SUMMARY.md
+Stopped at: Completed 04-01-PLAN.md (Path alias system, 173 unit + 56 integration tests passing)
+Resume file: .planning/phases/04-user-experience/04-01-SUMMARY.md
 
 ---
 *State initialized: 2026-02-16*
