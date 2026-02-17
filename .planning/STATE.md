@@ -10,18 +10,18 @@ See: .planning/PROJECT.md (updated 2026-02-16)
 ## Current Position
 
 Phase: 5 of 7 (Discovery & Security)
-Plan: 1 of 3 in current phase
+Plan: 2 of 3 in current phase
 Status: In Progress
-Last activity: 2026-02-17 -- Completed 05-01-PLAN.md (Security module: crypto + trust store)
+Last activity: 2026-02-17 -- Completed 05-02-PLAN.md (Discovery module + protocol types)
 
-Progress: [##################] 65%
+Progress: [####################] 70%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 15
-- Average duration: 14min
-- Total execution time: 3.4 hours
+- Total plans completed: 16
+- Average duration: 15min
+- Total execution time: 3.9 hours
 
 **By Phase:**
 
@@ -31,11 +31,11 @@ Progress: [##################] 65%
 | 02-performance | 3/3 | 22min | 7min |
 | 03-network-protocols | 4/4 | 55min | 14min |
 | 04-user-experience | 4/4 | 21min | 5min |
-| 05-discovery-security | 1/3 | 25min | 25min |
+| 05-discovery-security | 2/3 | 54min | 27min |
 
 **Recent Trend:**
-- Last 5 plans: 04-01 (6min), 04-02 (6min), 04-03 (4min), 04-04 (5min), 05-01 (25min)
-- Trend: 05-01 longer due to crypto dependency compilation (x25519-dalek, chacha20poly1305)
+- Last 5 plans: 04-02 (6min), 04-03 (4min), 04-04 (5min), 05-01 (25min), 05-02 (29min)
+- Trend: Phase 5 plans longer due to new dependency compilation and parallel build lock contention
 
 *Updated after each plan completion*
 
@@ -117,6 +117,11 @@ Recent decisions affecting current work:
 - [05-01] AeadCore trait import required for XChaCha20Poly1305::generate_nonce
 - [05-01] TrustStore compares public keys as base64 strings, matching storage format
 - [05-01] Corrupted trusted_devices.json silently starts fresh (matches existing graceful degradation pattern)
+- [05-02] bincode 2.x serde API (bincode::serde::encode_to_vec) for FluxMessage serialization with standard config
+- [05-02] mdns-sd ServiceDaemon is sync (internal thread) -- no async needed for discovery
+- [05-02] Device name sanitized to DNS label spec: replace non-alphanumeric with hyphens, collapse, truncate 63 chars
+- [05-02] FluxMessage uses Vec<u8> for public_key/nonce fields (serde-compatible, flexible length)
+- [05-02] Discovery prefers IPv4 addresses, deduplicates by instance name (first seen wins)
 
 ### Pending Todos
 
@@ -129,8 +134,8 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-02-17
-Stopped at: Completed 05-01-PLAN.md (Security module: X25519 crypto + TOFU trust store -- 245 unit + 67 integration = 312 tests passing)
-Resume file: .planning/phases/05-discovery-security/05-01-SUMMARY.md
+Stopped at: Completed 05-02-PLAN.md (Discovery module + protocol types -- 265 unit + 67 integration = 312 tests passing, 34 new tests)
+Resume file: .planning/phases/05-discovery-security/05-02-SUMMARY.md
 
 ---
 *State initialized: 2026-02-16*
