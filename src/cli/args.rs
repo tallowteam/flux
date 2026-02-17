@@ -1,5 +1,7 @@
 use clap::{Parser, Subcommand};
 
+use crate::config::types::{ConflictStrategy, FailureStrategy};
+
 #[derive(Parser, Debug)]
 #[command(name = "flux", version, about = "Blazing-fast file transfer")]
 pub struct Cli {
@@ -66,6 +68,18 @@ pub struct CpArgs {
     /// Resume interrupted transfer
     #[arg(long)]
     pub resume: bool,
+
+    /// Conflict handling when destination file exists: overwrite, skip, rename, ask
+    #[arg(long, value_enum)]
+    pub on_conflict: Option<ConflictStrategy>,
+
+    /// Failure handling when a copy operation fails: retry, skip, pause
+    #[arg(long, value_enum)]
+    pub on_error: Option<FailureStrategy>,
+
+    /// Preview operations without performing them
+    #[arg(long)]
+    pub dry_run: bool,
 }
 
 /// Arguments for the `flux add` command.
