@@ -1,6 +1,7 @@
 pub mod checksum;
 pub mod chunk;
 pub mod compress;
+pub mod conflict;
 pub mod copy;
 pub mod filter;
 pub mod parallel;
@@ -15,12 +16,14 @@ use walkdir::WalkDir;
 use crate::backend::create_backend;
 use crate::cli::args::CpArgs;
 use crate::config;
+use crate::config::types::{ConflictStrategy, FailureStrategy};
 use crate::error::FluxError;
 use crate::progress::bar::{create_directory_progress, create_file_progress};
 use crate::protocol::detect_protocol;
 
 use self::checksum::hash_file;
 use self::chunk::{auto_chunk_count, chunk_file};
+use self::conflict::resolve_conflict;
 use self::copy::copy_file_with_progress;
 use self::filter::TransferFilter;
 use self::parallel::parallel_copy_chunked;
@@ -62,7 +65,24 @@ impl TransferResult {
 /// then dispatches to single-file or directory copy. Detects protocol from
 /// source and destination strings -- network protocols return stub errors
 /// until Phase 3 Plans 02-04 implement them.
+///
+/// Config is loaded lazily here (only when transfer commands need it).
+/// CLI flags override config.toml values.
 pub fn execute_copy(args: CpArgs, quiet: bool) -> Result<(), FluxError> {
+    // Load config (graceful -- use defaults on error)
+    let flux_config = config::types::load_config().unwrap_or_default();
+
+    // CLI flags override config
+    let conflict_strategy = args.on_conflict.unwrap_or(flux_config.conflict);
+    let failure_strategy = args.on_error.unwrap_or(flux_config.failure);
+    let retry_count = flux_config.retry_count;
+    let retry_backoff_ms = flux_config.retry_backoff_ms;
+
+    tracing::debug!(
+        "Config: conflict={:?}, failure={:?}, retries={}, backoff={}ms",
+        conflict_strategy, failure_strategy, retry_count, retry_backoff_ms
+    );
+
     // Resolve aliases before protocol detection
     let alias_store = match config::paths::flux_config_dir() {
         Ok(dir) => config::aliases::AliasStore::load(&dir).unwrap_or_default(),
@@ -191,6 +211,34 @@ pub fn execute_copy(args: CpArgs, quiet: bool) -> Result<(), FluxError> {
         };
 
         let size = source_meta.len();
+
+        // --- Dry-run mode for single file ---
+        if args.dry_run {
+            let action = if final_dest.exists() {
+                match conflict_strategy {
+                    ConflictStrategy::Overwrite => "overwrite",
+                    ConflictStrategy::Skip => "skip",
+                    ConflictStrategy::Rename => "rename",
+                    ConflictStrategy::Ask => "overwrite (ask)",
+                }
+            } else {
+                "copy"
+            };
+            eprintln!(
+                "[dry-run] {} {} -> {} ({} bytes)",
+                action,
+                source.display(),
+                final_dest.display(),
+                size
+            );
+            return Ok(());
+        }
+
+        // --- Conflict resolution for single file ---
+        let final_dest = match resolve_conflict(&final_dest, conflict_strategy)? {
+            Some(path) => path,
+            None => return Ok(()), // Skip
+        };
 
         // Resume support: load existing manifest if --resume is set
         let mut resume_chunks = if args.resume {
@@ -352,8 +400,25 @@ pub fn execute_copy(args: CpArgs, quiet: bool) -> Result<(), FluxError> {
 
         Ok(())
     } else if source_meta.is_dir() {
-        // Directory copy with filtering and optional chunking/verification
-        let result = copy_directory(source, dest, &filter, quiet, chunk_count, args.verify)?;
+        // --- Dry-run mode for directory ---
+        if args.dry_run {
+            return dry_run_directory(source, dest, &filter, conflict_strategy);
+        }
+
+        // Directory copy with filtering, conflict resolution, failure handling,
+        // and optional chunking/verification
+        let result = copy_directory(
+            source,
+            dest,
+            &filter,
+            quiet,
+            chunk_count,
+            args.verify,
+            conflict_strategy,
+            failure_strategy,
+            retry_count,
+            retry_backoff_ms,
+        )?;
 
         tracing::info!(
             "Copied {} file(s), {} bytes",
@@ -395,7 +460,100 @@ pub fn execute_copy(args: CpArgs, quiet: bool) -> Result<(), FluxError> {
     }
 }
 
-/// Copy a directory recursively with filtering and progress.
+/// Preview a directory copy operation without performing any I/O.
+///
+/// Walks the source tree and reports what would happen for each file
+/// based on the conflict strategy. Prints a summary at the end.
+fn dry_run_directory(
+    source: &Path,
+    dest: &Path,
+    filter: &TransferFilter,
+    conflict_strategy: ConflictStrategy,
+) -> Result<(), FluxError> {
+    let source_str = source.to_string_lossy();
+    let has_trailing_slash = source_str.ends_with('/') || source_str.ends_with('\\');
+
+    let source_clean = if has_trailing_slash {
+        let trimmed = source_str.trim_end_matches(|c| c == '/' || c == '\\');
+        PathBuf::from(trimmed)
+    } else {
+        source.to_path_buf()
+    };
+
+    let dest_base = if has_trailing_slash {
+        dest.to_path_buf()
+    } else {
+        if let Some(dir_name) = source_clean.file_name() {
+            dest.join(dir_name)
+        } else {
+            dest.to_path_buf()
+        }
+    };
+
+    let mut total_files = 0u64;
+    let mut total_bytes = 0u64;
+
+    for entry in WalkDir::new(&source_clean)
+        .into_iter()
+        .filter_entry(|e| !filter.is_excluded_dir(e))
+    {
+        let entry = match entry {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
+
+        if !entry.file_type().is_file() {
+            continue;
+        }
+
+        if !filter.should_transfer(entry.path()) {
+            continue;
+        }
+
+        let relative = match entry.path().strip_prefix(&source_clean) {
+            Ok(r) => r,
+            Err(_) => continue,
+        };
+
+        if relative.as_os_str().is_empty() {
+            continue;
+        }
+
+        let dest_path = dest_base.join(relative);
+        let file_size = entry.metadata().map(|m| m.len()).unwrap_or(0);
+
+        let action = if dest_path.exists() {
+            match conflict_strategy {
+                ConflictStrategy::Overwrite => "overwrite",
+                ConflictStrategy::Skip => "skip",
+                ConflictStrategy::Rename => "rename",
+                ConflictStrategy::Ask => "overwrite (ask)",
+            }
+        } else {
+            "copy"
+        };
+
+        eprintln!(
+            "[dry-run] {} {} -> {} ({} bytes)",
+            action,
+            entry.path().display(),
+            dest_path.display(),
+            file_size
+        );
+
+        total_files += 1;
+        total_bytes += file_size;
+    }
+
+    eprintln!(
+        "[dry-run] Would copy {} file(s) ({} bytes total)",
+        total_files, total_bytes
+    );
+    Ok(())
+}
+
+/// Copy a directory recursively with filtering, conflict resolution,
+/// failure handling, and progress.
 ///
 /// Trailing slash semantics (rsync convention):
 /// - Source path ends with `/` or `\`: copy CONTENTS of source into dest
@@ -404,6 +562,7 @@ pub fn execute_copy(args: CpArgs, quiet: bool) -> Result<(), FluxError> {
 ///
 /// Individual file errors are collected in TransferResult, not fatal.
 /// Progress bar tracks file count (not bytes).
+#[allow(clippy::too_many_arguments)]
 fn copy_directory(
     source: &Path,
     dest: &Path,
@@ -411,6 +570,10 @@ fn copy_directory(
     quiet: bool,
     chunks: usize,
     verify: bool,
+    conflict_strategy: ConflictStrategy,
+    failure_strategy: FailureStrategy,
+    retry_count: u32,
+    retry_backoff_ms: u64,
 ) -> Result<TransferResult, FluxError> {
     // Detect trailing slash before normalizing the path
     let source_str = source.to_string_lossy();
@@ -503,8 +666,18 @@ fn copy_directory(
                 continue;
             }
 
+            // --- Conflict resolution ---
+            let actual_dest = match resolve_conflict(&dest_path, conflict_strategy)? {
+                Some(path) => path,
+                None => {
+                    // Skip this file
+                    progress.inc(1);
+                    continue;
+                }
+            };
+
             // Ensure parent directory exists
-            if let Some(parent) = dest_path.parent() {
+            if let Some(parent) = actual_dest.parent() {
                 if !parent.exists() {
                     if let Err(e) = std::fs::create_dir_all(parent) {
                         result.add_error(
@@ -528,28 +701,27 @@ fn copy_directory(
                 auto_chunk_count(file_size)
             };
 
-            let copy_result = if file_chunk_count > 1 && file_size > 0 {
-                // Parallel chunked copy for this file
-                let file_progress = ProgressBar::hidden();
-                let mut file_chunks = chunk_file(file_size, file_chunk_count);
-                parallel_copy_chunked(entry.path(), &dest_path, &mut file_chunks, &file_progress)
-                    .map(|_| file_size)
-            } else {
-                // Sequential copy for small files
-                let file_progress = ProgressBar::hidden();
-                copy_file_with_progress(entry.path(), &dest_path, &file_progress)
-            };
+            // --- Copy with failure handling ---
+            let copy_result = copy_with_failure_handling(
+                entry.path(),
+                &actual_dest,
+                file_size,
+                file_chunk_count,
+                failure_strategy,
+                retry_count,
+                retry_backoff_ms,
+            );
 
             match copy_result {
                 Ok(bytes) => {
                     // Post-transfer verification for this file if --verify
                     if verify && file_size > 0 {
-                        match (hash_file(entry.path()), hash_file(&dest_path)) {
+                        match (hash_file(entry.path()), hash_file(&actual_dest)) {
                             (Ok(src_hash), Ok(dst_hash)) if src_hash != dst_hash => {
                                 result.add_error(
                                     entry.path().to_path_buf(),
                                     FluxError::ChecksumMismatch {
-                                        path: dest_path.clone(),
+                                        path: actual_dest.clone(),
                                         expected: src_hash,
                                         actual: dst_hash,
                                     },
@@ -577,6 +749,83 @@ fn copy_directory(
 
     progress.finish_with_message("done");
     Ok(result)
+}
+
+/// Copy a single file with failure handling (retry/skip/pause).
+///
+/// Applies the configured failure strategy when a copy operation fails:
+/// - Retry: retries up to `retry_count` times with exponential backoff
+/// - Skip: returns the error immediately (caller adds to TransferResult)
+/// - Pause: prompts user to continue or abort, then returns the error
+fn copy_with_failure_handling(
+    source: &Path,
+    dest: &Path,
+    file_size: u64,
+    chunk_count: usize,
+    failure_strategy: FailureStrategy,
+    retry_count: u32,
+    retry_backoff_ms: u64,
+) -> Result<u64, FluxError> {
+    let do_copy = |src: &Path, dst: &Path| -> Result<u64, FluxError> {
+        if chunk_count > 1 && file_size > 0 {
+            let file_progress = ProgressBar::hidden();
+            let mut file_chunks = chunk_file(file_size, chunk_count);
+            parallel_copy_chunked(src, dst, &mut file_chunks, &file_progress)?;
+            Ok(file_size)
+        } else {
+            let file_progress = ProgressBar::hidden();
+            copy_file_with_progress(src, dst, &file_progress)
+        }
+    };
+
+    match failure_strategy {
+        FailureStrategy::Retry => {
+            let mut last_err = None;
+            for attempt in 0..=retry_count {
+                match do_copy(source, dest) {
+                    Ok(bytes) => return Ok(bytes),
+                    Err(e) => {
+                        if attempt < retry_count {
+                            let delay_ms = retry_backoff_ms * (1u64 << attempt);
+                            tracing::warn!(
+                                "Copy failed (attempt {}/{}): {}. Retrying in {}ms...",
+                                attempt + 1,
+                                retry_count + 1,
+                                e,
+                                delay_ms
+                            );
+                            std::thread::sleep(std::time::Duration::from_millis(delay_ms));
+                        }
+                        last_err = Some(e);
+                    }
+                }
+            }
+            Err(last_err.unwrap())
+        }
+        FailureStrategy::Skip => {
+            // Just try once; on failure, return the error
+            do_copy(source, dest)
+        }
+        FailureStrategy::Pause => {
+            match do_copy(source, dest) {
+                Ok(bytes) => Ok(bytes),
+                Err(e) => {
+                    use std::io::IsTerminal;
+                    if std::io::stdin().is_terminal() {
+                        eprintln!(
+                            "Error copying {}: {}",
+                            source.display(),
+                            e
+                        );
+                        eprintln!("Press Enter to continue or Ctrl+C to abort...");
+                        let mut input = String::new();
+                        let _ = std::io::stdin().read_line(&mut input);
+                    }
+                    Err(e)
+                }
+            }
+        }
+    }
 }
 
 /// Attempt to canonicalize a path; if it fails (e.g., path doesn't exist yet),
